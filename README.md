@@ -12,10 +12,13 @@ Currently the alarm system workflow is the following:
 
 A Telegram bot is also used as a command center to set, disarm or disable the alarm. You can also have the telegram bot send you pictures.
 
-A demo is worth a lengthy explanation so here's a link to a youtube video demonstration: <https://youtu.be/IQVJehvTrwI>
+A demo is worth a lengthy explanation so here's a link to a youtube video demonstration <https://youtu.be/IQVJehvTrwI>:
+
+![rpicalarm](https://img.youtube.com/vi/IQVJehvTrwI/0.jpg)
 
 Currently this project is just a demo for fun of what can be achieved with Raspberry pi and the raspberry pi camera module
 If you are interested please find below some very partial explanations of the setup process...
+
 
 
 # INSTALL on Raspberry PI
