@@ -1,0 +1,9 @@
+node_modules
+etc/ant*
+*.log
+npm-debug*
+*-picamalarm.conf
+*.tgz
+TODO.md
+test/manual/*
+scripts/copyToGit*
