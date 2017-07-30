@@ -1,0 +1,1 @@
+rsync -avzr --delete --exclude "node_modules" --exclude ".git"  --exclude ".gitignore" rpicalarm pi:Dev/
