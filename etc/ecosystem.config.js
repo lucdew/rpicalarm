@@ -4,20 +4,19 @@ module.exports = {
    * http://pm2.keymetrics.io/docs/usage/application-declaration/
    */
   apps: [
-
     // First application
     {
-      name: 'rpicalarm',
-      cwd: '/var/www/rpicalarm',
-      script: 'lib/app.js',
-      args: '-c etc/antibes-rpicalarm.conf',
-      out_file: '/var/log/rpicalarm/rpicalarm.log',
-      err_file: '/var/log/rpicalarm/rpicalarm.log',
-      pid_file: '/var/run/user/1000/rpicalarm/rpicalarm.pid',
+      name: "rpicalarm",
+      cwd: "/var/www/rpicalarm",
+      script: "dist/app.js",
+      args: "-c etc/antibes-rpicalarm.conf",
+      out_file: "/var/log/rpicalarm/rpicalarm.log",
+      err_file: "/var/log/rpicalarm/rpicalarm.log",
+      pid_file: "/var/run/user/1000/rpicalarm/rpicalarm.pid",
       combine_logs: true,
       env: {},
       env_production: {
-        NODE_ENV: 'production'
+        NODE_ENV: "production"
       }
     }
   ]
@@ -47,4 +46,4 @@ module.exports = {
   //     }
   //   }
   // }
-}
+};

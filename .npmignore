@@ -2,3 +2,4 @@ bin
 etc/ecosystem.config.js
 test
 scripts
+dist
