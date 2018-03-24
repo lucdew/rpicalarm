@@ -1,4 +1,8 @@
 // Place your settings in this file to overwrite default and user settings.
 {
-  "editor.formatOnSave": true
+  "editor.formatOnSave": true,
+  "python.pythonPath": "/usr/bin/python3",
+  "python.autoComplete.extraPaths": ["/home/luc/.local/lib/python3.6/site-packages"],
+  "python.linting.pylintPath": "/home/luc/.local/bin/pylint",
+  "python.formatting.provider": "autopep8"
 }

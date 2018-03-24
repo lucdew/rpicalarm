@@ -45,9 +45,6 @@ export default class PirSensor implements ISensor {
 
   async stop() {
     gpio.removeListener("change", this.changeListener);
-
-    gpio.destroy();
-
     // Not destroying to see if it fixes issues of receiving abnormal motion detection changes callbacks
     // gpio.destroy()
     return Promise.resolve();

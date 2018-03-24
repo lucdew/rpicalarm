@@ -25,7 +25,7 @@ let twimlMessage: any;
 
 class TwimlServer {
   private baseReplyUrl: string;
-  private statusCbBasePath = "/statusCb/failure/";
+  private statusCbBasePath = "/statusCb/";
   private authActionBasePath = "/actions/auth/";
 
   constructor(public webServer: WebServer, authToken?: string) {
@@ -34,7 +34,7 @@ class TwimlServer {
     router.post(
       `${this.statusCbBasePath}:sessionId`,
       twilioWebHook,
-      this.failedCbMiddleware.bind(this)
+      this.callStatusCbMiddleware.bind(this)
     );
     router.post(
       `${this.authActionBasePath}:sessionId`,
@@ -59,10 +59,17 @@ class TwimlServer {
     return `${this.baseReplyUrl}${this.authActionBasePath}${sessionId}?ts=${Date.now()}`;
   }
 
-  failedCbMiddleware(req: express.Request, res: express.Response) {
+  callStatusCbMiddleware(req: express.Request, res: express.Response) {
     const session = authSessionManager.getSession(req.params.sessionId);
     if (session) {
-      session.reportFailure(new Error("Call ended with status " + req.body.CallStatus), "twilio");
+      if (session.authState === AuthStates.AUTHED_WAITING_DISARM_DURATION) {
+        session.endInSuccess(AGENT_NAME);
+      } else if (!session.authState.isFinal()) {
+        session.reportFailure(
+          new Error("Call ended with status " + req.body.CallStatus),
+          AGENT_NAME
+        );
+      }
     }
     res.status(200).end();
   }
@@ -81,7 +88,6 @@ class TwimlServer {
 
     const ts = req.query.ts ? parseInt(req.query.ts) : undefined;
     const sessionUpdatedSinceLastResponse = ts && session.lastUpdateTime > ts;
-    console.log(sessionUpdatedSinceLastResponse);
 
     const twiml = new twilio.twiml.VoiceResponse();
     const getGather = () => ({
@@ -90,63 +96,50 @@ class TwimlServer {
       finishOnKey: "#"
     });
     res.set("Content-Type", "text/xml");
-    if (session.authState === AuthStates.FAILED) {
-      if (session.lastError instanceof AuthTimeoutError) {
-        twiml.say("Authentication timed out, possible intrusion");
-      } else {
-        twiml.say("Authentication failed, possible intrusion");
-      }
-    } else if (session.authState === AuthStates.AUTHED) {
-      twiml.say(
-        `thanks, alarm disarmed for ${
-          session.disarmDuration ? session.disarmDuration.humanize() : "some time"
-        }`
-      );
-    } else if (session.authState === AuthStates.ABORTED) {
-      twimlMessage = twiml.say("Authentication is not required anymore");
-    } else if (
-      session.authState === AuthStates.STARTED &&
-      session.tries === 0 &&
-      !req.body.Digits
-    ) {
-      twiml.say("Hi this is your rpialarm speaking");
-      twiml.gather(getGather());
-      twiml.say("Please enter your password followed by the pound key");
+    if (session.authState.isFinal()) {
+      twiml.say(session.lastMessage);
+      twiml.say("Goodbye.");
+      twiml.hangup();
+    } else if (session.authState === AuthStates.STARTED && !req.body.Digits) {
+      twiml.say("Hi this is your alarm speaking");
+      twiml.gather(getGather()).say("Please enter your password followed by the pound key");
     } else if (session.authState === AuthStates.STARTED) {
       if (!session.authenticate(req.body.Digits, AGENT_NAME)) {
         if (session.authState === AuthStates.FAILED) {
           twiml.say("Maximum number of tries reached, goodbye");
         } else {
-          const remainingTries = session.maxTries - session.tries;
-          twiml.say(
-            `Authentication failed, you have ${remainingTries} ${
-              remainingTries > 1 ? "tries" : "try"
-            } remaining`
-          );
-          twiml.gather(getGather());
-          twiml.say("Please enter your password followed by the pound key");
+          twiml.say(session.lastMessage);
+          twiml.gather(getGather()).say("Please enter your password followed by the pound key");
         }
       } else {
-        twiml.say("Authentication succeeded");
-        twiml.gather(getGather());
-        twiml.say("Enter disarm time followed by the pound key, last digit is the unit");
+        twiml.say(session.lastMessage);
+        twiml
+          .gather(getGather())
+          .say(
+            "Enter disarm time, last digit is the unit followed by the pound key. Or, hang-up now to disable the alarm."
+          );
       }
     } else if (session.authState === AuthStates.AUTHED_WAITING_DISARM_DURATION) {
       // If another authenticator authenticated the user the input values is the password
       // not the disarm duration
       if (sessionUpdatedSinceLastResponse) {
-        twiml.say("Authentication succeeded");
-        twiml.gather(getGather());
-        twiml.say("Enter disarm time, last digit is the unit");
+        twiml.say(session.lastMessage);
+        twiml
+          .gather(getGather())
+          .say(
+            "Enter disarm time, last digit is the unit followed by the pound key. Or, hang-up now to disable the alarm."
+          );
       } else {
         try {
-          const duration = util.parsePhoneDigitsDuration(req.body.Digits);
-          twiml.say(`Thanks, alarm disarmed for ${duration.humanize()}`);
-          session.setDisarmDuration(duration, "twilio");
+          session.setDisarmDuration(req.body.Digits, true, "twilio");
+          twiml.say(session.lastMessage);
+          twiml.say("Goodbye.");
+          twiml.hangup();
         } catch (err) {
-          twiml.say("Invalid duration");
-          twiml.gather(getGather());
-          twiml.say("Enter disarm time, last digit is the unit, followed by the pound key");
+          twiml.say(session.lastMessage);
+          twiml
+            .gather(getGather())
+            .say("Enter disarm time, last digit is the unit, followed by the pound key");
         }
       }
     }
@@ -168,7 +161,10 @@ export default class TwilioAgent implements IAuthenticator {
 
   async authenticate(session: IAuthSession): Promise<any> {
     logger.debug("Starting twilio authentication");
-    if (session.authState.isFinal()) {
+    if (
+      session.authState.isFinal() ||
+      session.authState === AuthStates.AUTHED_WAITING_DISARM_DURATION
+    ) {
       return Promise.resolve();
     }
 
@@ -176,18 +172,15 @@ export default class TwilioAgent implements IAuthenticator {
       await this.twimlServer.updateBaseReplyUrl();
       const authActionUrl = this.twimlServer.getAuthActionUrl(session.id);
       const statusUrl = this.twimlServer.getStatusCbUrl(session.id);
-      const call = await this.twilioClient.calls.create({
+      const twilioCallData = {
         url: authActionUrl,
         to: this.twilioConfig.mobilePhoneNumber,
         from: this.twilioConfig.landlinePhoneNumber,
         statusCallback: statusUrl,
-        statusCallbackEvent: ["busy", "failed", "no_answer", "canceled"]
-      });
-      logger.info(
-        `Called made to [${this.twilioConfig.mobilePhoneNumber}] from [${
-          this.twilioConfig.landlinePhoneNumber
-        }] with uri [${call.uri}]`
-      );
+        statusCallbackEvent: ["completed"]
+      };
+      const call = await this.twilioClient.calls.create(twilioCallData);
+      logger.info("Call made with %j", twilioCallData);
     } catch (err) {
       session.reportFailure(err, this.name);
     }

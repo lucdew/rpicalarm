@@ -1,16 +1,35 @@
-# Overview
+<!-- TOC -->
+
+* [1. Overview](#1-overview)
+* [2. INSTALL on Raspberry PI](#2-install-on-raspberry-pi)
+  * [2.1. Gpio](#21-gpio)
+  * [2.2. Manual installation](#22-manual-installation)
+    * [2.2.1. NodeJs](#221-nodejs)
+    * [2.2.2. Python3](#222-python3)
+    * [2.2.3. rpicalarm](#223-rpicalarm)
+* [3. rd parties setup](#3-rd-parties-setup)
+  * [3.1. Cloud Backup of photos](#31-cloud-backup-of-photos)
+    * [3.1.1. Cloudinary](#311-cloudinary)
+  * [3.2. Alarm control](#32-alarm-control)
+    * [3.2.1. Telegram](#321-telegram)
+  * [3.3. Authentication](#33-authentication)
+    * [3.3.1. Twilio](#331-twilio)
+  * [3.4. alert](#34-alert)
+    * [3.4.1. email](#341-email)
+
+<!-- /TOC -->
+
+# 1. Overview
 
 rpicalarm stands for Raspberry pi camera alarm
 
-It is an alarm systems running on NodeJs that relies on a PIR sensor to detect motion and warn someone over social media or other means.
+It is an alarm systems running on NodeJs and python3 that relies on a PIR sensor to detect motion and warn someone over social media or other means.
 Currently the alarm system workflow is the following:
-
-**Update 01/2018**: the application has been rewritten in typescript. Some unit/integration tests have been developped.
 
 * Movement is detected
 * rpicalarm starts taking pictures every few seconds and backup them in the cloud
-* rpicalarm tries to authenticate the user by pinging him with telegram messaging or calling him through a twilio voice server
-  * If the user succesfully authenticates with his pin, alarm is disarmed for a given duration, camera stops taking picture and photos are deleted
+* rpicalarm tries to authenticate the user by pinging him with telegram messaging or calling him through a twilio voice server for examples
+  * If the user successfully authenticates with his pin, alarm is disarmed for a given duration, camera stops taking picture and photos are deleted
   * It the user authentication fails, camera continues taking picture and backup them, an alert email is sent to the end-user
 
 A Telegram bot is also used as a command center to set, disarm or disable the alarm. You can also have the telegram bot send you pictures.
@@ -22,7 +41,10 @@ A demo is worth a lengthy explanation so here's a link to a youtube video demons
 Currently this project is just a demo for fun of what can be achieved with Raspberry pi and the raspberry pi camera module
 If you are interested please find below some very partial explanations of the setup process...
 
-# INSTALL on Raspberry PI
+**Update 03/2018**: the application has been rewritten in typescript. Some unit/integration tests have been developped.
+Python3 is being used for the excellent picamera module and also for upcoming machine learning detection.
+
+# 2. INSTALL on Raspberry PI
 
 The install process make the following assumptions:
 
@@ -31,7 +53,7 @@ The install process make the following assumptions:
 * The Pir sensor is connected to gpio 14
 * The Raspberry pi is connected to the internet through a non-static ip (will be configurable in future release)
 
-## Gpio
+## 2.1. Gpio
 
 To have the pi user be granted the permission to open the gpio 14 port, do the following:
 
@@ -47,7 +69,9 @@ gpio export 14 out
 echo 1 > /sys/class/gpio/gpio14/value
 ```
 
-## NodeJs
+## 2.2. Manual installation
+
+### 2.2.1. NodeJs
 
 Create /usr/local/etc/npmrc and set :
 user=pi
@@ -59,7 +83,17 @@ npm install pm2 -g
 pm2 install pm2-logrotate
 ```
 
-## rpicalarm
+### 2.2.2. Python3
+
+Install python3,pip3 and update it:
+
+```
+sudo apt install python3
+sudo apt install python3-pip
+sudo pip3 install --upgrade pip
+```
+
+### 2.2.3. rpicalarm
 
 Perform a git clone of the repository
 
@@ -87,11 +121,11 @@ Configure pm2 to automatically start the rpicalarm when the server starts:
 pm2 save
 ```
 
-# 3rd parties setup
+# 3. rd parties setup
 
-## Cloud Backup of photos
+## 3.1. Cloud Backup of photos
 
-### Cloudinary
+### 3.1.1. Cloudinary
 
 Just create an [Cloudinary](http://cloudinary.com/) account
 You need to retrieve 3 assets:
@@ -100,23 +134,23 @@ You need to retrieve 3 assets:
 * Api secret
 * Cloud name
 
-## Alarm control
+## 3.2. Alarm control
 
 TODO
 
-### Telegram
+### 3.2.1. Telegram
 
 TODO
 
-## Authentication
+## 3.3. Authentication
 
-### Twilio
+### 3.3.1. Twilio
 
 TODO
 
-## alert
+## 3.4. alert
 
-### email
+### 3.4.1. email
 
 Setting up a smtp server is beyond the current install procedure.
 I use zoho mail with a custom domain. It is free. You can define an application account and use their smtp server to send emails.

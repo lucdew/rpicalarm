@@ -37,12 +37,8 @@ export interface IAuthSessionState {
 }
 
 export interface IAuthSessionEvt {
-  newState: IAuthSessionState;
-  changeStateTime: number;
-  previousState?: IAuthSessionState;
-  disarmDuration?: moment.Duration;
-  origin?: string;
-  err?: Error;
+  session: IAuthSession;
+  origin: string;
 }
 
 export interface IAuthSession {
@@ -50,13 +46,15 @@ export interface IAuthSession {
   authState: IAuthSessionState;
   lastUpdateTime: number;
   lastError: RpicAlarmError;
+  lastMessage: string;
   disarmDuration?: moment.Duration;
   tries: number;
   maxTries: number;
-  setDisarmDuration(duration: moment.Duration, origin: string): void;
-  reportFailure(err: RpicAlarmError, origin: string): void;
+  setDisarmDuration(duration: string, isOnlyDigits: boolean, origin: string): void;
+  endInSuccess(origin: string): void;
+  reportFailure(err: RpicAlarmError, origin: string, message?: string): void;
   startAuthentication(): void;
-  abort(): void;
+  abort(origin: string): void;
   authenticate(credential: string, origin: string): boolean;
   registerListener(listener: (evt: IAuthSessionEvt) => void): void;
   removeAllListeners(): void;
@@ -131,6 +129,8 @@ export interface ICameraSettings {
   hflip: boolean;
   imageSize: string;
   cameraCaptureLength: number;
+  youtubeUrl: string;
+  youtubeStreamKey: string;
 }
 
 export interface ITelegramConfig {

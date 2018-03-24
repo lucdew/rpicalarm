@@ -3,6 +3,7 @@ import * as EventEmitter from "events";
 import * as api from "./api";
 import * as log4js from "log4js";
 import * as moment from "moment";
+import * as util from "./util";
 import { AuthSessionEvtName, IAuthSessionState, IAuthSessionEvt, RpicAlarmError } from "./api";
 
 const logger = log4js.getLogger("AuthSessionManager");
@@ -15,10 +16,8 @@ function computeDigest(salt: string, pwd: string) {
 }
 
 class AuthState implements IAuthSessionState {
-  constructor(public name: string, public getNextsFunc: () => IAuthSessionState[]) {}
-  get nexts() {
-    return this.getNextsFunc();
-  }
+  nexts: Array<IAuthSessionState> = [];
+  constructor(public name: string) {}
   isFinal() {
     return this.nexts.length === 0;
   }
@@ -27,29 +26,45 @@ class AuthState implements IAuthSessionState {
   }
 }
 
-export const AuthStates: { [key: string]: IAuthSessionState } = {
-  CREATED: new AuthState("created", () => [
-    AuthStates.STARTED,
-    AuthStates.ABORTED,
-    AuthStates.FAILED
-  ]),
-  STARTED: new AuthState("started", () => [
-    AuthStates.AUTHED_WAITING_DISARM_DURATION,
-    AuthStates.AUTHED,
-    AuthStates.ABORTED,
-    AuthStates.FAILED
-  ]),
-  AUTHED_WAITING_DISARM_DURATION: new AuthState("started", () => [
-    AuthStates.AUTHED,
-    AuthStates.ABORTED,
-    AuthStates.FAILED
-  ]),
-  AUTHED: new AuthState("authed", () => []),
-  ABORTED: new AuthState("aborted", () => []),
-  FAILED: new AuthState("failed", () => [])
+export const MESSAGES = {
+  AUTH_SUCCEEDED: "You have been authenticated.",
+  FAILED: "Authentication failed, possible intrusion.",
+  DONE: "Authentication successful.",
+  INVALID_CRED_ENTERED: "Invalid password.",
+  INVALID_DISARM_TIME: "Invalid disarm duration.",
+  TIMEDOUT: "Authentication expired, possible intrusion.",
+  ABORTED: "Authentication is not required anymore"
 };
 
-type EvtData = { origin?: string; err?: Error; disarmDuration?: moment.Duration };
+export const AuthStates = {
+  CREATED: new AuthState("created"),
+  STARTED: new AuthState("started"),
+  AUTHED_WAITING_DISARM_DURATION: new AuthState("authed_waiting_disarm_duration"),
+  AUTHED: new AuthState("authed"),
+  ABORTED: new AuthState("aborted"),
+  FAILED: new AuthState("failed")
+};
+
+AuthStates.CREATED.nexts = [AuthStates.STARTED, AuthStates.ABORTED, AuthStates.FAILED];
+AuthStates.STARTED.nexts = [
+  AuthStates.AUTHED_WAITING_DISARM_DURATION,
+  AuthStates.AUTHED,
+  AuthStates.ABORTED,
+  AuthStates.FAILED
+];
+AuthStates.AUTHED_WAITING_DISARM_DURATION.nexts = [
+  AuthStates.AUTHED,
+  AuthStates.ABORTED,
+  AuthStates.FAILED
+];
+
+type ChangeStateData = {
+  err?: Error;
+  disarmDuration?: moment.Duration;
+  message: string;
+  state?: IAuthSessionState;
+  tries?: number;
+};
 
 class AuthSession implements api.IAuthSession {
   id: string;
@@ -58,6 +73,7 @@ class AuthSession implements api.IAuthSession {
   authState: IAuthSessionState = AuthStates.CREATED;
   disarmDuration: moment.Duration;
   lastError: RpicAlarmError;
+  lastMessage: string;
   lastUpdateTime = 0;
 
   private listeners: ((evt: IAuthSessionEvt) => void)[] = [];
@@ -66,6 +82,7 @@ class AuthSession implements api.IAuthSession {
   private digest: string;
   private salt: string;
   private authTtl: number;
+  private disarmDurationTimer: NodeJS.Timer;
 
   constructor(
     authenticators: api.IAuthenticator[],
@@ -97,39 +114,86 @@ class AuthSession implements api.IAuthSession {
     });
   }
 
-  setDisarmDuration(disarmDuration: moment.Duration, origin: string) {
-    this.disarmDuration = disarmDuration;
-    this.changeState(AuthStates.AUTHED, { disarmDuration, origin });
+  setDisarmDuration(disarmDuration: string, isOnlyDigits: boolean, origin: string) {
+    let duration;
+
+    if (/^\s*0+\s*$/.test(disarmDuration)) {
+      duration = moment.duration(0);
+    } else {
+      try {
+        if (isOnlyDigits) {
+          duration = util.parsePhoneDigitsDuration(disarmDuration);
+        } else {
+          duration = util.parseDuration(disarmDuration, "h");
+        }
+      } catch (err) {
+        const durationErr = new RpicAlarmError("invalid disarm time " + disarmDuration);
+        logger.error("Got error ", durationErr.message);
+        this.createDisarmDurationTimer(origin); // update the timer
+        this.changeState({ err, message: MESSAGES.INVALID_DISARM_TIME }, origin);
+        throw err;
+      }
+    }
+    const message =
+      duration.asMilliseconds() === 0
+        ? "Thanks alarm disabled."
+        : `Thanks, alarm disarmed for ${duration.humanize()}. `;
+    this.changeState(
+      {
+        state: AuthStates.AUTHED,
+        message,
+        disarmDuration: duration
+      },
+      origin
+    );
   }
 
-  reportFailure(err: api.RpicAlarmError, origin: string) {
+  reportFailure(err: api.RpicAlarmError, origin: string, message?: string) {
     this.failures.push(err);
     if (err instanceof api.AuthError) {
       logger.error("Failed authentication for [%s], reason=[%s]", origin, err.message);
+      this.changeState({ state: AuthStates.FAILED, err, message: message || err.message }, origin);
     } else {
       logger.error("An error occurred while authentication for [%s]", origin, err);
       if (this.failures.length === Object.keys(this.authenticators).length) {
-        this.fail(new api.AggregatorError(this.failures));
+        this.fail(new api.AggregatorError(this.failures), origin);
       }
     }
   }
-  private reportAuthSuccess(origin: string) {
-    this.changeState(AuthStates.AUTHED_WAITING_DISARM_DURATION, { origin });
 
-    if (!this.disarmDuration) {
-      setTimeout(() => {
-        if (!this.disarmDuration) {
-          this.changeState(AuthStates.AUTHED, { origin });
-        }
-      }, 60000); // wait another 1mn to have disarm duration set if not already set
+  endInSuccess(origin: string) {
+    this.changeState({ state: AuthStates.AUTHED, message: MESSAGES.DONE }, origin);
+  }
+
+  private reportAuthSuccess(origin: string) {
+    this.changeState(
+      { state: AuthStates.AUTHED_WAITING_DISARM_DURATION, message: MESSAGES.AUTH_SUCCEEDED },
+      origin
+    );
+
+    this.createDisarmDurationTimer(origin);
+  }
+
+  private createDisarmDurationTimer(origin: string) {
+    if (this.disarmDuration) {
+      return;
     }
+    if (this.disarmDurationTimer) {
+      clearTimeout(this.disarmDurationTimer);
+      this.disarmDurationTimer = undefined;
+    }
+    this.disarmDurationTimer = setTimeout(() => {
+      if (!this.disarmDuration && this.authState.isFinal()) {
+        this.changeState({ state: AuthStates.AUTHED, message: MESSAGES.DONE }, origin);
+      }
+    }, 20000); // wait another 20 seconds to have disarm duration set if not already set
   }
 
   startAuthentication() {
     setTimeout(() => {
       this.authTimeout();
     }, this.authTtl);
-    this.changeState(AuthStates.STARTED);
+    this.changeState({ state: AuthStates.STARTED, message: "" }, "internal");
     for (const authName in this.authenticators) {
       const auth = this.authenticators[authName];
       setTimeout(() => {
@@ -142,14 +206,18 @@ class AuthSession implements api.IAuthSession {
     }
   }
 
-  abort() {
-    this.changeState(AuthStates.ABORTED);
+  abort(origin: string) {
+    this.changeState({ state: AuthStates.ABORTED, message: MESSAGES.ABORTED }, origin);
   }
 
   private authTimeout() {
+    if (this.authState.isFinal() || this.authState === AuthStates.AUTHED_WAITING_DISARM_DURATION) {
+      logger.debug("auth timeout but nothing to do %s", this.authState.name);
+      return;
+    }
     const authTimeoutMessage = `Authentication timeout of ${this.authTtl} ms exceeded`;
     logger.error(authTimeoutMessage);
-    this.fail(new api.AuthTimeoutError(authTimeoutMessage));
+    this.reportFailure(new api.AuthTimeoutError(authTimeoutMessage), "internal", MESSAGES.FAILED);
   }
 
   authenticate(credential: string, origin: string) {
@@ -160,9 +228,15 @@ class AuthSession implements api.IAuthSession {
       this.reportAuthSuccess(origin);
       return true;
     }
-    this.tries += 1;
-    if (this.tries === this.maxTries) {
-      this.reportFailure(new api.AuthError("Max tries reached"), origin);
+    const tries = this.tries + 1;
+    if (tries === this.maxTries) {
+      this.reportFailure(new api.AuthError(MESSAGES.FAILED), origin);
+    } else {
+      const remainingTries = this.maxTries - tries;
+      const msgSuffix = ` You have ${remainingTries} ${
+        remainingTries > 1 ? "tries" : "try"
+      } remaining.`;
+      this.changeState({ tries, message: MESSAGES.INVALID_CRED_ENTERED + msgSuffix }, origin);
     }
     return false;
   }
@@ -181,33 +255,42 @@ class AuthSession implements api.IAuthSession {
     this.listeners = [];
   }
 
-  private changeState(newState: IAuthSessionState, evtData?: EvtData) {
-    if (!this.authState.isFinal()) {
-      const previousState = this.authState;
-      this.authState = newState;
-      this.lastUpdateTime = Date.now();
-      for (const listener of this.listeners) {
-        try {
-          listener({
-            newState,
-            changeStateTime: this.lastUpdateTime,
-            previousState,
-            origin: evtData && evtData.origin,
-            err: evtData && evtData.err
-          });
-        } catch (err) {
-          logger.error("Listener invocation failed", err);
-        }
-      }
-      if (newState.isFinal()) {
-        this.removeAllListeners();
+  private async notifyListeners(origin: string) {
+    for (const listener of this.listeners) {
+      try {
+        await listener({
+          session: this,
+          origin
+        });
+      } catch (err) {
+        logger.error("Listener invocation failed", err);
       }
     }
   }
 
-  private fail(err: api.RpicAlarmError): void {
+  private changeState(stateData: ChangeStateData, origin: string) {
+    logger.debug("Changing state to %j from [%s]", stateData, origin);
+    if (this.authState.isFinal()) {
+      return; // already changed state
+    }
+    if (stateData.state) {
+      this.authState = stateData.state;
+    }
+    if (stateData.tries) {
+      this.tries = stateData.tries;
+    }
+    if (stateData.disarmDuration) {
+      this.disarmDuration = stateData.disarmDuration;
+    }
+    this.lastError = stateData.err;
+    this.lastMessage = stateData.message;
+    this.lastUpdateTime = Date.now();
+    this.notifyListeners(origin).catch(err => logger.error(err));
+  }
+
+  private fail(err: api.RpicAlarmError, origin: string): void {
     this.lastError = err;
-    this.changeState(AuthStates.FAILED, { err });
+    this.changeState({ state: AuthStates.FAILED, err, message: MESSAGES.FAILED }, origin);
   }
 }
 

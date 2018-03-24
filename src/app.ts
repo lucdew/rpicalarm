@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import * as path from "path";
 import * as log4js from "log4js";
 import * as toml from "toml";
 import Alarm from "./alarm";
@@ -46,6 +47,7 @@ function loadConf(cfgFile: string) {
 const cfgFile = yargs.c || yargs.cfg || "/etc/rpicalarm/rpicalarm.conf";
 
 const cfg: IConfiguration = loadConf(cfgFile);
+process.env["CFG_FILE"] = path.resolve(cfgFile);
 
 if (cfg.logging && cfg.logging.level) {
   log4js.configure({

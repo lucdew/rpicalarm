@@ -4,8 +4,11 @@
   "description": "",
   "main": "lib/app.js",
   "scripts": {
-    "build-ts": "tsc",
-    "watch-ts": "tsc -w",
+    "compile": "tsc",
+    "watch": "tsc -w",
+    "copy-assets":
+      "cp src/*.py dist/ && cp -r src/pycmdserver dist/ && cp package.json dist/ && cp etc/rpicalarm.conf dist/",
+    "build": "npm run compile && npm run copy-assets",
     "test": "jest --forceExit --coverage --verbose"
   },
   "dependencies": {
@@ -27,7 +30,7 @@
     "telebot": "^1.2.3",
     "tmp": "0.0.33",
     "toml": "^2.3.3",
-    "twilio": "^3.6.0",
+    "twilio": "^3.11.3",
     "yargs": "^11.0.0"
   },
   "author": "LucDew",

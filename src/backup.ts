@@ -8,7 +8,7 @@ import { IBackup } from "./api";
 const logger = log4js.getLogger("backup");
 
 function isImageFile(f: string) {
-  return f && (f.endsWith(".jpeg") || f.endsWith(".jpg"));
+  return f && !path.basename(f).startsWith("_") && (f.endsWith(".jpeg") || f.endsWith(".jpg"));
 }
 
 const fsAccessAsync = bluebird.promisify(fs.access);
@@ -97,21 +97,22 @@ export default class Backup {
       const f = someFiles[idx];
       try {
         await fsAccessAsync(f);
-        logger.debug("Uploading file %s", f);
-        try {
-          await bluebird.any(this.backends.map(b => b.save(f, this.getFileMetaData(f))));
-          logger.info("Backed up file %s", f);
-          fs.unlink(f, unlinkErr => {
-            if (unlinkErr) {
-              logger.error("Failed deleting file %s", f, unlinkErr);
-            }
-          });
-        } catch (uploadErr) {
-          logger.error("Failed uploading files", uploadErr);
-          someFiles.splice(idx, 1); // remove it to process it once again
-        }
       } catch (err) {
         logger.error("Failed accessing file %s must have been deleted", f, err);
+        return;
+      }
+      logger.debug("Uploading file %s", f);
+      try {
+        await bluebird.any(this.backends.map(b => b.save(f, this.getFileMetaData(f))));
+        logger.info("Backed up file %s", f);
+        fs.unlink(f, unlinkErr => {
+          if (unlinkErr) {
+            logger.error("Failed deleting file %s", f, unlinkErr);
+          }
+        });
+      } catch (uploadErr) {
+        logger.error("Failed uploading files", uploadErr);
+        someFiles.splice(idx, 1); // remove it to process it once again
       }
     }
   }
@@ -120,7 +121,7 @@ export default class Backup {
     this.isConsuming = true;
     const queueCopy = this.fileQueue.slice();
 
-    await this.backendsUpload(queueCopy);
+    await this.backendsUpload(queueCopy); // it removes unprocessed files
     this.fileQueue = this.fileQueue.filter(x => !queueCopy.includes(x));
     this.isConsuming = false;
     if (this.fileQueue.length > 0) {

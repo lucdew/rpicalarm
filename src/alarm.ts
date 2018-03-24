@@ -1,6 +1,7 @@
 import { EventEmitter } from "events";
 import * as moment from "moment";
 import * as util from "./util";
+import * as log4js from "log4js";
 import {
   IAgent,
   IConfiguration,
@@ -14,7 +15,7 @@ import {
 } from "./api";
 import { instance as authSessionManager, AuthStates } from "./authSessionManager";
 
-const logger = require("log4js").getLogger("alarm");
+const logger = log4js.getLogger("alarm");
 
 interface AlarmState {
   name: string;
@@ -64,7 +65,7 @@ async function execAllSequential(targets: IAgent[], funcName: string, ...args: a
     }
     try {
       await op.apply(target, args);
-      logger.debug(`Executed  ${util.getMemberFunctionName(op)} on ${target.name}`);
+      logger.debug(`Executed ${util.getMemberFunctionName(op)} on ${target.name}`);
     } catch (err) {
       logger.error(
         "Failed executing %s on %s named %s",
@@ -129,7 +130,7 @@ export default class Alarm extends EventEmitter {
   motionDetected() {
     if (!this.state.nexts.includes(STATES.AUTHENTICATING)) {
       logger.debug(
-        "Transition to [%s] state not allowed from [%s]",
+        "Motion detected, transition to [%s] state not allowed from [%s]",
         STATES.AUTHENTICATING.name,
         this.state.name
       );
@@ -142,31 +143,39 @@ export default class Alarm extends EventEmitter {
     );
     this.sessionId = authSession.id;
 
-    const disableListener = () => {
-      authSession.abort();
+    const disableListener = (evt: any) => {
+      authSession.abort(evt.origin);
       delete this.sessionId;
     };
     this.once("disabled", disableListener);
 
-    authSession.registerListener((evt: IAuthSessionEvt) => {
-      if (evt.newState === AuthStates.AUTHED_WAITING_DISARM_DURATION) {
-        logger.info("Authentication succeeded");
-        this.removeListener("disabled", disableListener);
-        this.stopRecorders().catch(err => logger.error(err));
-      } else if (evt.newState === AuthStates.FAILED) {
-        this.removeListener("disabled", disableListener);
-        logger.debug("Auth failure error", evt.err);
-        logger.error("Failed authentication");
-        delete this.sessionId;
-        this.intrusionDetected({
-          sessionId: authSession.id,
-          intrusionDate: new Date()
-        });
-      } else if (evt.newState === AuthStates.AUTHED) {
-        delete this.sessionId;
-        this.disarm(evt ? evt.disarmDuration : undefined, authSession.id).catch(err =>
-          logger.error(err)
-        );
+    logger.info("Registering alarm listener");
+    authSession.registerListener(async (evt: IAuthSessionEvt) => {
+      const session = evt.session;
+      try {
+        if (session.authState === AuthStates.AUTHED_WAITING_DISARM_DURATION) {
+          logger.info("Authentication succeeded");
+          this.removeListener("disabled", disableListener);
+          await this.stopRecorders();
+        } else if (session.authState === AuthStates.FAILED) {
+          this.removeListener("disabled", disableListener);
+          logger.debug("Auth failure error", session.lastError);
+          logger.error("Failed authentication");
+          delete this.sessionId;
+          this.intrusionDetected({
+            sessionId: session.id,
+            intrusionDate: new Date()
+          });
+        } else if (session.authState === AuthStates.AUTHED) {
+          delete this.sessionId;
+          if (!session.disarmDuration || session.disarmDuration.asMilliseconds() === 0) {
+            await this.disable(evt.origin);
+          } else {
+            await this.disarm(session.disarmDuration, authSession.id);
+          }
+        }
+      } catch (err) {
+        logger.error(err);
       }
     });
 
@@ -181,7 +190,7 @@ export default class Alarm extends EventEmitter {
     });
   }
 
-  async disable() {
+  async disable(origin: string) {
     this.state = STATES.DISABLED;
     await this.stopSensors();
     await this.cancelEnableTimer();
@@ -189,30 +198,17 @@ export default class Alarm extends EventEmitter {
     logger.info("Alarm disabled");
     const sessionId = this.sessionId;
     this.emit("disabled", {
-      sessionId
+      sessionId,
+      origin
     });
   }
 
-  async disarm(duration: string | moment.Duration | number, sessionId?: string) {
+  async disarm(duration: moment.Duration, sessionId?: string) {
     this.state = STATES.DISARMED;
     this.emit("disarmed", {
       sessionId
     });
-    let timeout: number;
-    if (duration && duration.constructor && duration.constructor.name === "Duration") {
-      timeout = (<moment.Duration>duration).asMilliseconds();
-    } else if (!isNaN(<number>duration)) {
-      timeout = <number>duration;
-    } else if (typeof duration === "string") {
-      try {
-        timeout = util.parseDuration(duration).asMilliseconds();
-      } catch (err) {
-        logger.error("Received invalid duration [%s]", duration, err);
-        timeout = this.defaultDisarmTtl;
-      }
-    } else {
-      timeout = this.defaultDisarmTtl;
-    }
+    const timeout = duration ? duration.asMilliseconds() : this.defaultDisarmTtl;
 
     await this.stopRecorders();
     await this.stopSensors();
@@ -230,9 +226,11 @@ export default class Alarm extends EventEmitter {
       this.enable();
     }, timeout);
     this.enableTimer.nextExecutionDate = Date.now() + timeout;
+    logger.info("Schedule enable timer is=" + this.enableTimer);
   }
 
   get nextEnableDate() {
+    logger.info("Get enable timer is=" + this.enableTimer);
     if (this.enableTimer) {
       return moment(this.enableTimer.nextExecutionDate).format("dddd, MMMM Do YYYY, HH:mm:ss");
     }
@@ -244,6 +242,7 @@ export default class Alarm extends EventEmitter {
 
   cancelEnableTimer() {
     if (this.enableTimer) {
+      logger.info("Cancel enable timer is=" + this.enableTimer);
       clearTimeout(this.enableTimer);
       this.enableTimer = undefined;
     }
@@ -270,10 +269,10 @@ export default class Alarm extends EventEmitter {
   }
 
   async startRecordersInWarning(...opts: any[]) {
-    await execAllSequential(this._recorders, "startWarningRecording", opts);
+    await execAllSequential(this._recorders, "startWarningRecording", ...opts);
   }
 
   notifyOfIntrusion(...opts: any[]) {
-    execAllSequential(this._notifiers, "notify", opts).catch(err => logger.error(err));
+    execAllSequential(this._notifiers, "notify", ...opts).catch(err => logger.error(err));
   }
 }

@@ -170,7 +170,7 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
 
   async onDisable() {
     try {
-      this.alarm.disable();
+      this.alarm.disable(this.name);
       return await this.onStatus();
     } catch (err) {
       logger.error("could not disable alarm", err);
@@ -188,12 +188,19 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
     }
   }
 
-  async onStatus() {
-    let msg = "status:" + this.alarm.state.name;
-    if (this.alarm.state === this.alarm.STATES.DISARMED) {
-      msg += "\n will be enabled " + this.alarm.nextEnableDate;
+  async onStatus(msg?: string) {
+    let txtMsg;
+    if (msg) {
+      txtMsg = msg + "\n";
     }
-    return await this.sendMessage(msg);
+    // TODO: remove check for testing (avoiding to instantiate an alarm)
+    if (this.alarm) {
+      txtMsg = "status:" + this.alarm.state.name;
+      if (this.alarm.state === this.alarm.STATES.DISARMED) {
+        txtMsg += "\n will be enabled " + this.alarm.nextEnableDate;
+      }
+    }
+    return await this.sendMessage(txtMsg);
   }
 
   async onStart(msg: TelegramMessage, sessionId: string) {
@@ -214,9 +221,12 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
 
   async onPhoto(msg: TelegramMessage) {
     try {
-      const f = await this.camera.takePhoto();
+      const b = await this.camera.takePhoto();
       await this.sendMessage("sending your file...");
-      await this.bot.sendPhoto(msg.chat.id, fs.createReadStream(f));
+      logger.debug("Photo size=%s", b ? b.length + "" : "null");
+      await this.bot.sendPhoto(msg.chat.id, b, {
+        fileName: moment().format("YYYYMMDDHHmmss")
+      });
     } catch (err) {
       logger.error("failed taking photo", err);
       await this.sendMessage("failed taking photos");
@@ -224,27 +234,22 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
   }
 
   async onAuthSessionEvent(evt: IAuthSessionEvt) {
-    if (evt.newState.isFinal()) {
+    const session = evt.session;
+    const authState = evt.session.authState;
+
+    if (authState.isFinal()) {
       this.sessionId = undefined;
-    }
-    if (evt.newState === AuthStates.FAILED) {
-      if (evt.err instanceof AuthTimeoutError) {
-        await this.sendMessage("Authentication timed out, possible intrusion");
-      } else {
-        await this.sendMessage("Authentication failed, possible intrusion");
-      }
-    } else if (evt.newState === AuthStates.AUTHED_WAITING_DISARM_DURATION) {
+      await this.onStatus(session.lastMessage);
+    } else if (
+      authState === AuthStates.AUTHED_WAITING_DISARM_DURATION &&
+      (!session.lastError || (evt.origin === this.name && session.lastError)) // ignore error message of other authenticators
+    ) {
       await this.sendMessage(
-        "You have been authenticated. Enter disarm time, default unit is the hour"
+        session.lastMessage +
+          " Enter the disarm time (ex: 4h for 4 hours) or just type 0 to disable the alarm."
       );
-    } else if (evt.newState === AuthStates.AUTHED) {
-      await this.sendMessage(
-        `thanks, alarm disarmed for ${
-          evt.disarmDuration ? evt.disarmDuration.humanize() : "some time"
-        }`
-      );
-    } else if (evt.newState === AuthStates.ABORTED && evt.origin !== this.name) {
-      await this.onStatus();
+    } else if (authState === AuthStates.STARTED && session.tries > 0 && evt.origin === this.name) {
+      await this.sendMessage(session.lastMessage);
     }
   }
 
@@ -255,10 +260,12 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
 
     const sendMessageErrorHandler = (err: any) => logger.error(err);
 
-    session.registerListener((evt: IAuthSessionEvt) => {
-      this.onAuthSessionEvent(evt).catch(err => {
-        logger.error(err.toString());
-      });
+    session.registerListener(async (evt: IAuthSessionEvt) => {
+      try {
+        await this.onAuthSessionEvent(evt);
+      } catch (err) {
+        logger.error(err);
+      }
     });
     try {
       if (!this.chatId) {
@@ -292,26 +299,17 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
     const sessionUpdatedSinceLastMessage = session.lastUpdateTime > this.lastMessageSentTime;
     if (session.authState === AuthStates.STARTED && !isStart) {
       const enteredPassword = msg.text;
-      if (
-        !session.authenticate(enteredPassword, this.name) &&
-        session.authState !== AuthStates.FAILED
-      ) {
-        return await this.sendMessage(
-          `Wrong password,try again (remaining attempts ${session.maxTries - session.tries})`
-        );
-      }
-    } else if (session.authState === AuthStates.STARTED) {
+      session.authenticate(enteredPassword, this.name);
+    } else if (session.authState === AuthStates.STARTED && isStart) {
       return await this.sendMessage(AUTH_MSG);
     } else if (
       session.authState === AuthStates.AUTHED_WAITING_DISARM_DURATION &&
-      !sessionUpdatedSinceLastMessage
+      !sessionUpdatedSinceLastMessage // if session has been updated it means that the msg.txt is the password, ignore it it is not required anymore
     ) {
       try {
-        const duration = util.parseDuration(msg.text, "h");
-        session.setDisarmDuration(duration, "telegram");
-        return await this.sendMessage(`thanks, alarm disarmed for ${duration.humanize()}`);
+        session.setDisarmDuration(msg.text, false, "telegram");
       } catch (err) {
-        return await this.sendMessage("invalid disarm time, enter again");
+        // ignore
       }
     } else {
       logger.debug("no action to be executed on session");

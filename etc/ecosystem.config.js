@@ -8,8 +8,8 @@ module.exports = {
     {
       name: "rpicalarm",
       cwd: "/var/www/rpicalarm",
-      script: "dist/app.js",
-      args: "-c etc/antibes-rpicalarm.conf",
+      script: "app.js",
+      args: "-c rpicalarm.conf",
       out_file: "/var/log/rpicalarm/rpicalarm.log",
       err_file: "/var/log/rpicalarm/rpicalarm.log",
       pid_file: "/var/run/user/1000/rpicalarm/rpicalarm.pid",

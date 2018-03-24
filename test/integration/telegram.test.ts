@@ -91,7 +91,7 @@ describe("authenticate", () => {
     );
   });
 
-  it("test the whole authentication scenario with 1 failed password attempt", async () => {
+  it("test the whole authentication scenario with 1 failed password attempt and 1 wrong disarm duration", async () => {
     const chatId = "12345";
     const t = new Telegram(TELEGRAM_CFG, null, null);
     t.start();
@@ -103,7 +103,7 @@ describe("authenticate", () => {
     await t.onMessage(createTelegramMessage(chatId, "wrong password"));
     expect(TeleBot.prototype.sendMessage).lastCalledWith(
       expect.anything(),
-      expect.stringContaining("remaining attempts 2"),
+      expect.stringContaining("2 tries remaining"),
       undefined
     );
     expect(authSession.tries).toBe(1);
@@ -111,18 +111,43 @@ describe("authenticate", () => {
     await t.onMessage(createTelegramMessage(chatId, PWD));
     expect(TeleBot.prototype.sendMessage).lastCalledWith(
       expect.anything(),
-      expect.stringContaining("been authenticated"),
+      expect.stringContaining("been authenticated. Enter the disarm time"),
       undefined
     );
     expect(authSession.authState).toBe(AuthStates.AUTHED_WAITING_DISARM_DURATION);
 
-    await t.onMessage(createTelegramMessage(chatId, "1h"));
+    await t.onMessage(createTelegramMessage(chatId, "dummy"));
     expect(TeleBot.prototype.sendMessage).lastCalledWith(
       expect.anything(),
-      expect.stringContaining("disarmed for an hour"),
+      expect.stringContaining("nvalid disarm duration"),
       undefined
     );
-    expect(authSession.disarmDuration.asMilliseconds()).toBe(60 * 60 * 1000);
+
+    expect(authSession.authState).toBe(AuthStates.AUTHED_WAITING_DISARM_DURATION);
+
+    await t.onMessage(createTelegramMessage(chatId, "2h"));
+    expect(TeleBot.prototype.sendMessage).lastCalledWith(
+      expect.anything(),
+      expect.stringContaining("disarmed for 2 hours"),
+      undefined
+    );
+    expect(authSession.disarmDuration.asMilliseconds()).toBe(2 * 60 * 60 * 1000);
+    expect(authSession.authState).toBe(AuthStates.AUTHED);
+  });
+
+  it("test that setting a disarm duration of 0 is valid ", async () => {
+    const chatId = "12345";
+    const t = new Telegram(TELEGRAM_CFG, null, null);
+    t.start();
+    const authSession = authSessionManager.createAuthSession(PWD, 60000, [t]);
+    authSession.authState = AuthStates.STARTED;
+    (<any>t).chatId = chatId;
+    await t.authenticate(authSession);
+
+    await t.onMessage(createTelegramMessage(chatId, PWD));
+    expect(authSession.authState).toBe(AuthStates.AUTHED_WAITING_DISARM_DURATION);
+
+    await t.onMessage(createTelegramMessage(chatId, "0"));
     expect(authSession.authState).toBe(AuthStates.AUTHED);
   });
 });
