@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from "child_process";
+import * as _ from "lodash";
 import * as log4js from "log4js";
 import * as fs from "fs";
 import * as tmp from "tmp";
@@ -33,11 +34,6 @@ export default class Camera implements IRecorder {
 
   constructor(cameraSettings: ICameraSettings) {
     this.imageSavePath = cameraSettings.savePath || "/var/tmp/";
-    const [width, height] = cameraSettings.imageSize.toLowerCase().split("x");
-    this.imageSizeDims = {
-      width: parseInt(width),
-      height: parseInt(height)
-    };
     this.cameraSettings = cameraSettings;
     if (!fs.existsSync(this.imageSavePath)) {
       fs.mkdirSync(this.imageSavePath); // non recursive
@@ -48,11 +44,9 @@ export default class Camera implements IRecorder {
 
   async startWarningRecording(sessionInfo: ISessionInfo) {
     await this.pyBackendClient.request({
-      cmd: "takeTimelapse",
-      width: this.imageSizeDims.width,
-      height: this.imageSizeDims.height,
-      prefix: sessionInfo.sessionId,
-      save_path: this.imageSavePath
+      target: "camera",
+      cmd: "take_timelapse",
+      prefix: sessionInfo.sessionId // TODO see usage of prefix
     });
   }
 
@@ -62,17 +56,32 @@ export default class Camera implements IRecorder {
 
   async takePhoto(): Promise<Buffer> {
     return <Buffer>await this.pyBackendClient.request({
-      cmd: "takePicture",
-      width: this.imageSizeDims.width,
-      height: this.imageSizeDims.height,
-      v_flip: !!this.cameraSettings.vflip,
-      h_flip: !!this.cameraSettings.hflip
+      target: "camera",
+      cmd: "take_picture"
     });
   }
 
   async stopRecording() {
     await this.pyBackendClient.request({
-      cmd: "stopTimelapse"
+      target: "camera",
+      cmd: "stop_bg_task"
     });
+  }
+
+  async toggleWebCam(): Promise<boolean> {
+    const res = <Buffer>await this.pyBackendClient.request({
+      target: "camera",
+      cmd: "toggle_stream",
+      url: this.cameraSettings.youtubeUrl + "/" + this.cameraSettings.youtubeStreamKey
+    });
+    return res.toString("utf-8").toLowerCase() === "true";
+  }
+
+  async getStatus(): Promise<string> {
+    const res = <Buffer>await this.pyBackendClient.request({
+      target: "camera",
+      cmd: "get_state"
+    });
+    return res.toString("utf-8");
   }
 }

@@ -2,10 +2,8 @@
 
 import argparse
 import logging
-import sys
-import os
-import socket
 from configparser import SafeConfigParser
+import sys
 import toml
 from pycmdserver.server import Server
 
@@ -52,5 +50,5 @@ if __name__ == "__main__":
     if not args.verbose:
         logger.setLevel(getattr(logging, log_level.upper()))
 
-    s = Server()
+    s = Server(cfg)
     s.start()

@@ -69,7 +69,9 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
       this.onEnable,
       this.onPhoto,
       this.onStatus,
-      this.onStart
+      this.onStart,
+      this.onCam,
+      this.onCamStatus
     ]) {
       const methName = util.getMemberFunctionName(meth);
       const evtName = methName.substring(2).toLowerCase();
@@ -170,8 +172,11 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
 
   async onDisable() {
     try {
-      this.alarm.disable(this.name);
-      return await this.onStatus();
+      const isAuthSessionRunning = !!this.sessionId;
+      await this.alarm.disable(this.name);
+      if (!isAuthSessionRunning) {
+        return await this.onStatus();
+      }
     } catch (err) {
       logger.error("could not disable alarm", err);
       return await this.sendMessage("Failed disabling alarm");
@@ -337,6 +342,32 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
       await this.sendMessage("How long alarm must be disarmed ?", {
         ask: "disarm"
       });
+    }
+  }
+
+  async onCam() {
+    try {
+      const hasStarted = await this.camera.toggleWebCam();
+      if (hasStarted) {
+        return await this.sendMessage(
+          "Live stream started, check out https://www.youtube.com/live_dashboard"
+        );
+      } else {
+        return await this.sendMessage("Live stream stopped");
+      }
+    } catch (err) {
+      logger.error("failed executing webcam operation ", err);
+      await this.sendMessage("webcam command failed");
+    }
+  }
+
+  async onCamStatus() {
+    try {
+      const status = await this.camera.getStatus();
+      return await this.sendMessage("camera is " + status);
+    } catch (err) {
+      logger.error("failed getting camera status", err);
+      await this.sendMessage("Could not get camera status, reason=" + err.message);
     }
   }
 }

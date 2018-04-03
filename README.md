@@ -6,7 +6,9 @@
   * [2.2. Manual installation](#22-manual-installation)
     * [2.2.1. NodeJs](#221-nodejs)
     * [2.2.2. Python3](#222-python3)
-    * [2.2.3. rpicalarm](#223-rpicalarm)
+    * [2.2.3. ffmpeg for webcam streaming to youtube](#223-ffmpeg-for-webcam-streaming-to-youtube)
+    * [2.2.4. rpicalarm](#224-rpicalarm)
+  * [2.3. Docker installation](#23-docker-installation)
 * [3. rd parties setup](#3-rd-parties-setup)
   * [3.1. Cloud Backup of photos](#31-cloud-backup-of-photos)
     * [3.1.1. Cloudinary](#311-cloudinary)
@@ -93,7 +95,42 @@ sudo apt install python3-pip
 sudo pip3 install --upgrade pip
 ```
 
-### 2.2.3. rpicalarm
+### 2.2.3. ffmpeg for webcam streaming to youtube
+
+ffmpeg is used to encode video stream to rtmp protocol and stream via youtube live stream
+Sadly ffmpeg needs to be compiled. I had no luck with avconv and it seemed that with it the video stream bandwidth was not sufficient
+even reducing the bitrate
+
+Follow the instructions from http://www.jeffreythompson.org/blog/2014/11/13/installing-ffmpeg-for-raspberry-pi/
+I copied it here in the case the web page disappears
+
+First install h264 video codec
+
+```
+git clone git://git.videolan.org/x264
+cd x264
+./configure --host=arm-unknown-linux-gnueabi --enable-static --disable-opencl
+make
+sudo make install
+```
+
+Then ffmpeg
+
+```
+git clone https://github.com/FFmpeg/FFmpeg.git
+cd ffmpeg
+sudo ./configure --arch=armel --target-os=linux --enable-gpl --enable-libx264 --enable-nonfree
+make
+sudo make install
+```
+
+For reference to install avconv use
+
+```
+sudo apt-get install libav-tools
+```
+
+### 2.2.4. rpicalarm
 
 Perform a git clone of the repository
 
@@ -120,6 +157,10 @@ Configure pm2 to automatically start the rpicalarm when the server starts:
 ```
 pm2 save
 ```
+
+## 2.3. Docker installation
+
+TBD
 
 # 3. rd parties setup
 

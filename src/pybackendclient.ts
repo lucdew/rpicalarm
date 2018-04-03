@@ -78,9 +78,11 @@ export default class PyBackendClient {
           } else if (data.length === 2 && data[0] === 0 && data[1] === 10) {
             client.end();
             return resolve();
-          } else if (data.length === 2 && data[0] === 1 && data[1] === 10) {
+          } else if (data[0] === 1 && data[1] === 10) {
+            const errorMsg =
+              data.length > 2 ? Buffer.from(data.slice(2)).toString("utf-8") : "Server error";
             client.end();
-            return reject(new Error("Server error"));
+            return reject(new Error(errorMsg));
           } else {
             client.end();
             return reject(new Error("Unexpected error"));

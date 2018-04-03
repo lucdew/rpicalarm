@@ -11,19 +11,12 @@ server_address = '/tmp/rpicalarm-pybackend.sock'
 
 logger = logging.getLogger()
 
-camera = Camera()
-
-commands = {
-    'takePicture': camera.takePictureCmd,
-    'takeTimelapse': camera.takeTimelapseCmd,
-    'stopTimelapse': camera.stopBackgroundTask
-}
-
 
 class OutStreamWrapper(object):
     def __init__(self, conn):
         self.conn = conn
         self.written = False
+        self.closed = False
 
     def write(self, data):
         if not self.written:
@@ -31,33 +24,40 @@ class OutStreamWrapper(object):
             self.written = True
         self.conn.send(data)
 
-    def close(self, status=True):
-        data = ""
+    def close(self, error_msg=None):
+        if self.closed:
+            return
         if not self.written:
-            data = "000a" if status else "010a"
-        self.conn.sendall(bytes.fromhex(data))
-
+            data = "000a" if not error_msg else "010a"
+            self.conn.send(bytes.fromhex(data))
+        if error_msg:
+            self.conn.send(error_msg.encode("utf-8"))
+        self.closed = True
+        self.conn.close()
 
 
 class Server():
-    def __init__(self):
-        pass
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.camera = Camera(cfg['agents']['camera'])
 
     def parse_cmd_data(self, data):
         for idx, item in enumerate(data):
             if item == 0x0A:
                 try:
                     jsoncmd = json.loads(data[0:idx].decode("utf-8"))
-                    if not 'cmd' in jsoncmd:
-                        logger.error("command is missing name")
+                    if not 'target' in jsoncmd:
+                        logger.error("command or target are missing")
                         return (None, None)
-                    cmd = jsoncmd['cmd']
-                    if cmd not in commands:
-                        logger.error("unknown command %s", cmd)
-                        return (None, None)
-                    logger.debug("Found command %s", cmd)
-                    jsoncmd.pop('cmd')
-                    return (commands[cmd], jsoncmd)
+                    target = jsoncmd.pop('target')
+                    logger.debug("Found target %s", target)
+                    if target == 'camera':
+                        target = self.camera
+                    else:
+                        logger.error("Unsupported target %s", target)
+                        return (None, jsoncmd)
+
+                    return (target, jsoncmd)
 
                 except Exception as e:
                     logger.error("Got invalid data, error %s", repr(e))
@@ -90,12 +90,11 @@ class Server():
 
             data = connection.recv(4096)
             try:
-                cmd, args = self.parse_cmd_data(data)
-                logger.debug("cmd=%s,args=%s", cmd, str(args))
-                if cmd is not None:
-                    cmd(osw, **args)
+                target, args = self.parse_cmd_data(data)
+                if target is not None:
+                    target.invoke(osw, **args)
                 else:
-                    osw.close(status=False)
+                    osw.close("Unsupported or missing target")
                     break
 
             except Exception as e:
@@ -104,7 +103,7 @@ class Server():
 
             finally:
                 # Clean up the connection
-                connection.close()
+                osw.close()
 
     def stop(self):
         if self.sock:
