@@ -49,7 +49,7 @@ describe("twilio authenticate", () => {
     authSession.authState = AuthStates.STARTED;
     await twilioAgent.authenticate(authSession);
     let res = await request(ws.webapp)
-      .post(`/twilio/actions/auth/${authSession.id}`)
+      .post(`/twilio/actions/auth/${authSession.sessionId}`)
       .send({})
       .expect("content-type", /text\/xml.*/)
       .expect(200);
@@ -78,7 +78,7 @@ describe("twilio authenticate", () => {
     expect(authSession.authState).toBe(AuthStates.AUTHED_WAITING_DISARM_DURATION);
     expect(authSession.tries).toBe(1);
 
-    twimlRegex = /.*<Say>.*disarmed for an hour. Goodbye.*<Hangup\/>.*/;
+    twimlRegex = /.*<Say>.*disarmed for an hour.*Goodbye.*<Hangup\/>.*/;
     res = await request(ws.webapp)
       .post(uri)
       .send({ Digits: "14" })
@@ -95,7 +95,7 @@ describe("twilio authenticate", () => {
     authSession.authState = AuthStates.STARTED;
     await twilioAgent.authenticate(authSession);
     let res = await request(ws.webapp)
-      .post(`/twilio/actions/auth/${authSession.id}`)
+      .post(`/twilio/actions/auth/${authSession.sessionId}`)
       .send({})
       .expect("content-type", /text\/xml.*/)
       .expect(200);
@@ -110,7 +110,7 @@ describe("twilio authenticate", () => {
     expect(authSession.authState).toBe(AuthStates.AUTHED_WAITING_DISARM_DURATION);
 
     res = await request(ws.webapp)
-      .post(`/twilio/statusCb/${authSession.id}`)
+      .post(`/twilio/statusCb/${authSession.sessionId}`)
       .send({})
       .expect(200);
     expect(authSession.authState).toBe(AuthStates.AUTHED);

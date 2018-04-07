@@ -6,7 +6,6 @@ import * as tmp from "tmp";
 import { ICameraSettings, IRecorder, ISessionInfo } from "../api";
 import { ReadStream } from "fs";
 import PyBackendClient from "../pybackendclient";
-// import Stream from "stream" // todo stream support
 
 const logger = log4js.getLogger("camera");
 
@@ -45,8 +44,7 @@ export default class Camera implements IRecorder {
   async startWarningRecording(sessionInfo: ISessionInfo) {
     await this.pyBackendClient.request({
       target: "camera",
-      cmd: "take_timelapse",
-      prefix: sessionInfo.sessionId // TODO see usage of prefix
+      cmd: "take_timelapse"
     });
   }
 

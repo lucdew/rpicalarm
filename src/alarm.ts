@@ -104,7 +104,7 @@ export default class Alarm extends EventEmitter {
   intrusionDetected(sessionInfo: ISessionInfo): void {
     this.emit("intrusionDetected", sessionInfo);
     this.state = STATES.ALARMING;
-    this.notifyOfIntrusion(moment().format("dddd, MMMM Do YYYY, HH:mm:ss"));
+    this.notifyOfIntrusion(sessionInfo);
   }
 
   set authenticators(authenticators: IAuthenticator[]) {
@@ -141,7 +141,7 @@ export default class Alarm extends EventEmitter {
       this.authTtl,
       this._authenticators
     );
-    this.sessionId = authSession.id;
+    this.sessionId = authSession.sessionId;
 
     const disableListener = (evt: any) => {
       authSession.abort(evt.origin);
@@ -162,16 +162,13 @@ export default class Alarm extends EventEmitter {
           logger.debug("Auth failure error", session.lastError);
           logger.error("Failed authentication");
           delete this.sessionId;
-          this.intrusionDetected({
-            sessionId: session.id,
-            intrusionDate: new Date()
-          });
+          this.intrusionDetected(authSession);
         } else if (session.authState === AuthStates.AUTHED) {
           delete this.sessionId;
           if (!session.disarmDuration || session.disarmDuration.asMilliseconds() === 0) {
             await this.disable(evt.origin);
           } else {
-            await this.disarm(session.disarmDuration, authSession.id);
+            await this.disarm(session.disarmDuration, authSession.sessionId);
           }
         }
       } catch (err) {
@@ -180,14 +177,10 @@ export default class Alarm extends EventEmitter {
     });
 
     this.state = STATES.AUTHENTICATING;
-    this.emit("authenticating", {
-      sessionId: authSession.id
-    });
+    this.emit("authenticating", authSession);
 
     authSession.startAuthentication();
-    this.startRecordersInWarning({
-      sessionId: authSession.id
-    });
+    this.startRecordersInWarning(authSession);
   }
 
   async disable(origin: string) {
@@ -257,22 +250,56 @@ export default class Alarm extends EventEmitter {
   }
 
   async startSensors() {
-    await execAllSequential(this._sensors, "start");
+    for (const sensor of this._sensors) {
+      try {
+        await sensor.start();
+      } catch (err) {
+        logger.error("Could not start sensor [%s]", sensor.name, err);
+      }
+    }
   }
 
   async stopSensors() {
-    await execAllSequential(this._sensors, "stop");
+    for (const sensor of this._sensors) {
+      try {
+        await sensor.stop();
+      } catch (err) {
+        logger.error("Could not stop sensor [%s]", sensor.name, err);
+      }
+    }
   }
 
   async stopRecorders() {
-    await execAllSequential(this._recorders, "stopRecording");
+    for (const recorder of this._recorders) {
+      try {
+        await recorder.stopRecording();
+      } catch (err) {
+        logger.error("Could not stop recorder [%s]", recorder.name, err);
+      }
+    }
   }
 
-  async startRecordersInWarning(...opts: any[]) {
-    await execAllSequential(this._recorders, "startWarningRecording", ...opts);
+  async startRecordersInWarning(sessionInfo: ISessionInfo) {
+    for (const recorder of this._recorders) {
+      try {
+        await recorder.startWarningRecording(sessionInfo);
+      } catch (err) {
+        logger.error("Could not start recorder [%s]", recorder.name, err);
+      }
+    }
   }
 
-  notifyOfIntrusion(...opts: any[]) {
-    execAllSequential(this._notifiers, "notify", ...opts).catch(err => logger.error(err));
+  notifyOfIntrusion(sessionInfo: ISessionInfo) {
+    (async (si: ISessionInfo) => {
+      for (const notifier of this._notifiers) {
+        try {
+          await notifier.notify(si);
+        } catch (err) {
+          logger.error("Could not notify notifier [%s]", notifier.name, err);
+        }
+      }
+    })(sessionInfo).catch(err => {
+      logger.error("Unexpected error while notifying of intrusion", err);
+    });
   }
 }

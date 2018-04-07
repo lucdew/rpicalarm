@@ -67,7 +67,7 @@ type ChangeStateData = {
 };
 
 class AuthSession implements api.IAuthSession {
-  id: string;
+  sessionId: string;
   maxTries: number;
   tries = 0;
   authState: IAuthSessionState = AuthStates.CREATED;
@@ -75,6 +75,7 @@ class AuthSession implements api.IAuthSession {
   lastError: RpicAlarmError;
   lastMessage: string;
   lastUpdateTime = 0;
+  intrusionDate: Date;
 
   private listeners: ((evt: IAuthSessionEvt) => void)[] = [];
   private authenticators: { [key: string]: api.IAuthenticator } = {};
@@ -91,22 +92,25 @@ class AuthSession implements api.IAuthSession {
       digest,
       salt,
       authTtl = 5 * 60 * 1000,
-      maxTries = 3
+      maxTries = 3,
+      intrusionDate = new Date()
     }: {
       id?: string;
       digest: string;
       salt: string;
       authTtl: number;
       maxTries?: number;
+      intrusionDate?: Date;
     }
   ) {
-    this.id = id;
+    this.sessionId = id;
     this.maxTries = maxTries;
     this.failures = [];
     this.digest = digest;
     this.salt = salt;
     this.authTtl = authTtl;
     this.lastUpdateTime = Date.now();
+    this.intrusionDate = intrusionDate;
 
     authenticators.forEach(auth => {
       const authName = auth.name;
@@ -242,9 +246,9 @@ class AuthSession implements api.IAuthSession {
   }
 
   toString() {
-    return `[id=${this.id},authState=${this.authState},_authTtl=${this.authTtl},maxTries=${
-      this.maxTries
-    },_salt=${this.salt}]`;
+    return `[sessionId=${this.sessionId},authState=${this.authState},_authTtl=${
+      this.authTtl
+    },maxTries=${this.maxTries},_salt=${this.salt}]`;
   }
 
   registerListener(listener: (evt: IAuthSessionEvt) => void): void {
@@ -312,9 +316,9 @@ class AuthSessionManager extends EventEmitter {
       salt,
       authTtl
     });
-    this.sessions[authSession.id] = authSession;
+    this.sessions[authSession.sessionId] = authSession;
     setTimeout(() => {
-      delete this.sessions[authSession.id];
+      delete this.sessions[authSession.sessionId];
     }, authTtl + 10 * 60 * 1000);
 
     return authSession;

@@ -91,7 +91,7 @@ class TwimlServer {
 
     const twiml = new twilio.twiml.VoiceResponse();
     const getGather = () => ({
-      action: this.getAuthActionUrl(session.id),
+      action: this.getAuthActionUrl(session.sessionId),
       timeout: 30,
       finishOnKey: "#"
     });
@@ -170,8 +170,8 @@ export default class TwilioAgent implements IAuthenticator {
 
     try {
       await this.twimlServer.updateBaseReplyUrl();
-      const authActionUrl = this.twimlServer.getAuthActionUrl(session.id);
-      const statusUrl = this.twimlServer.getStatusCbUrl(session.id);
+      const authActionUrl = this.twimlServer.getAuthActionUrl(session.sessionId);
+      const statusUrl = this.twimlServer.getStatusCbUrl(session.sessionId);
       const twilioCallData = {
         url: authActionUrl,
         to: this.twilioConfig.mobilePhoneNumber,

@@ -69,7 +69,9 @@ describe("authenticate", () => {
       }
     );
     // Simulate a click on url button
-    await t.onMessage(createTelegramMessage(authSession.id, "/start " + authSession.id));
+    await t.onMessage(
+      createTelegramMessage(authSession.sessionId, "/start " + authSession.sessionId)
+    );
     expect(TeleBot.prototype.sendMessage).lastCalledWith(
       expect.anything(),
       expect.stringContaining("ntrusion detected"),

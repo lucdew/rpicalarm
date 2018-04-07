@@ -261,7 +261,7 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
   async authenticate(session: IAuthSession) {
     logger.debug("Starting telegram authentication");
 
-    this.sessionId = session.id;
+    this.sessionId = session.sessionId;
 
     const sendMessageErrorHandler = (err: any) => logger.error(err);
 
@@ -276,13 +276,13 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
       if (!this.chatId) {
         logger.debug(
           `No chat present sending notification to ${this.telegramCfg.botName} for session ${
-            session.id
+            session.sessionId
           }`
         );
         const markup = this.bot.inlineKeyboard([
           [
             this.bot.inlineButton("Authenticate", {
-              url: `telegram.me/${this.telegramCfg.botName}?start=${session.id}`
+              url: `telegram.me/${this.telegramCfg.botName}?start=${session.sessionId}`
             })
           ]
         ]);

@@ -42,12 +42,13 @@ export interface IAuthSessionEvt {
 }
 
 export interface IAuthSession {
-  id: string;
+  sessionId: string;
   authState: IAuthSessionState;
   lastUpdateTime: number;
   lastError: RpicAlarmError;
   lastMessage: string;
   disarmDuration?: moment.Duration;
+  intrusionDate: Date;
   tries: number;
   maxTries: number;
   setDisarmDuration(duration: string, isOnlyDigits: boolean, origin: string): void;
