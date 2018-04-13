@@ -45,6 +45,7 @@ export default class PyBackendClient {
     const client = net.createConnection("/tmp/rpicalarm-pybackend.sock");
     client.setTimeout(30000);
     let status = false;
+    let appError = false;
     let res = Buffer.alloc(0);
 
     return new Promise<Buffer | void>((resolve, reject) => {
@@ -65,24 +66,26 @@ export default class PyBackendClient {
       });
 
       client.on("close", (had_error: boolean) => {
-        if (!had_error) {
-          resolve(res);
+        if (had_error) {
+          return;
+        }
+        if (!appError) {
+          return resolve(res);
+        } else {
+          const errorMsg = res.length > 0 ? res.toString("utf-8") : "Server error";
+          return reject(new Error(errorMsg));
         }
       });
 
       client.on("data", function(data) {
         if (!status) {
-          if (data.length > 2 && data[0] === 0 && data[1] === 10) {
+          if (data.length >= 2 && data[0] === 0 && data[1] === 10) {
             status = true;
             data = data.slice(2);
-          } else if (data.length === 2 && data[0] === 0 && data[1] === 10) {
-            client.end();
-            return resolve();
-          } else if (data[0] === 1 && data[1] === 10) {
-            const errorMsg =
-              data.length > 2 ? Buffer.from(data.slice(2)).toString("utf-8") : "Server error";
-            client.end();
-            return reject(new Error(errorMsg));
+          } else if (data.length >= 2 && data[0] === 1 && data[1] === 10) {
+            appError = true;
+            status = true;
+            data = data.slice(2);
           } else {
             client.end();
             return reject(new Error("Unexpected error"));
