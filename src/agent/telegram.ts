@@ -17,6 +17,7 @@ import * as moment from "moment";
 
 const logger = log4js.getLogger("telegramBot");
 const cmdRegex = /^\/([^\s]+)\s*(.*)$/; // command example /photo <params>
+const request = require("request");
 
 export interface TelegramChat {
   id: string;
@@ -60,9 +61,23 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
     this.bot = new TeleBot({
       token: telegramCfg.botToken,
       polling: {
-        timeout: 10
+        timeout: 30
       }
     });
+
+    // dirty-hack for telebot request timeout
+    const orgiPost = request.post;
+    request.post = function() {
+      if (arguments.length >= 1) {
+        const options = arguments[0];
+        if (options && options.url && /.*getUpdates.*/.test(options.url) && !options.timeout) {
+          options.timeout = 30000;
+          return orgiPost.apply(request, arguments);
+        }
+      }
+      return orgiPost.apply(request, arguments);
+    };
+
     for (const meth of [
       this.onDisable,
       this.onDisarm,
