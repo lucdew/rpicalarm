@@ -5,9 +5,12 @@ import logging
 from configparser import SafeConfigParser
 import sys
 import toml
-from pycmdserver.server import Server
+import time
+from backendserver.server import Server
 
 #import logging.handlers
+
+_ONE_YEAR_IN_SECONDS = 365 * 60 * 60 * 24
 
 
 def parse_arguments():
@@ -52,3 +55,9 @@ if __name__ == "__main__":
 
     s = Server(cfg)
     s.start()
+
+    try:
+        while True:
+            time.sleep(_ONE_YEAR_IN_SECONDS)
+    except KeyboardInterrupt:
+        s.stop()

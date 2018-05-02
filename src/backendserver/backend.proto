@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package backendserver;
+
+message CameraResult {
+  bool status = 1;
+  string message = 2;
+}
+
+message EmptyRequest {
+}
+
+message BasicReply {
+  CameraResult result = 1;
+}
+
+message TakePictureReply {
+  CameraResult result = 1;
+  bytes picture = 2;
+}
+
+message ToggleWebStreamRequest {
+  string url = 1;
+}
+
+message ToggleWebStreamReply {
+  CameraResult result = 1;
+  bool isStreaming = 2;
+}
+
+message GetStateReply {
+  CameraResult result = 1;
+  string state = 2;
+}
+
+message Notification {
+  string name = 1;
+  int64 timestamp = 2;
+}
+
+
+service CameraService {
+  rpc TakePicture (EmptyRequest) returns (TakePictureReply);
+  rpc StartTimelapse (EmptyRequest) returns (BasicReply);
+  rpc StopTimelapse (EmptyRequest) returns (BasicReply);
+  rpc ToggleWebStream (ToggleWebStreamRequest) returns (ToggleWebStreamReply);
+  rpc StartMotionDetection (EmptyRequest) returns (BasicReply);
+  rpc StopMotionDetection (EmptyRequest) returns (BasicReply);
+  rpc GetState (EmptyRequest) returns (GetStateReply);
+  rpc SubscribeNotifications (EmptyRequest) returns (stream Notification);
+}

@@ -6,7 +6,8 @@
   "scripts": {
     "compile": "tsc",
     "watch": "tsc -w",
-    "copy-assets": "cp src/*.py dist/ && cp -r src/pycmdserver dist/ && cp package.json dist/ && cp etc/rpicalarm.conf dist/",
+    "copy-assets":
+      "cp src/*.py dist/ && cp -r src/backendserver dist/ && cp package.json dist/ && cp etc/rpicalarm.conf dist/",
     "build": "npm run compile && npm run copy-assets",
     "test": "jest --forceExit --coverage --verbose"
   },
@@ -17,6 +18,7 @@
     "cloudinary-core": "^2.3.0",
     "express": "^4.16.2",
     "file-stream-rotator": "^0.2.0",
+    "grpc": "^1.10.1",
     "http-auth": "^3.1.1",
     "lodash": "^4.17.5",
     "log4js": "^2.5.2",
@@ -26,6 +28,7 @@
     "nodemailer": "^4.4.2",
     "passport": "^0.4.0",
     "passport-http": "^0.3.0",
+    "protobufjs": "^6.8.6",
     "rpi-gpio-mod": "0.7.0",
     "telebot": "^1.2.3",
     "tmp": "0.0.33",

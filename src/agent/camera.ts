@@ -5,7 +5,8 @@ import * as fs from "fs";
 import * as tmp from "tmp";
 import { ICameraSettings, IRecorder, ISessionInfo } from "../api";
 import { ReadStream } from "fs";
-import PyBackendClient from "../pybackendclient";
+import GrpcBackendClient from "../backendClient";
+import * as grpc from "grpc";
 
 const logger = log4js.getLogger("camera");
 
@@ -27,7 +28,7 @@ interface TakePhotoSettings {
 export default class Camera implements IRecorder {
   imageSavePath: string;
   imageSizeDims: ImageDimensions;
-  pyBackendClient: PyBackendClient;
+  backendClient: GrpcBackendClient;
   cameraSettings: ICameraSettings;
   name = "camera";
 
@@ -37,15 +38,12 @@ export default class Camera implements IRecorder {
     if (!fs.existsSync(this.imageSavePath)) {
       fs.mkdirSync(this.imageSavePath); // non recursive
     }
-    this.pyBackendClient = new PyBackendClient(this.imageSavePath);
+    this.backendClient = new GrpcBackendClient(this.imageSavePath);
     //process.on("SIGINT", this._killCameraProc.bind(this));
   }
 
   async startWarningRecording(sessionInfo: ISessionInfo) {
-    await this.pyBackendClient.request({
-      target: "camera",
-      cmd: "take_timelapse"
-    });
+    await this._invoke("StartTimelapse", {});
   }
 
   get assetsSavePath() {
@@ -53,33 +51,35 @@ export default class Camera implements IRecorder {
   }
 
   async takePhoto(): Promise<Buffer> {
-    return <Buffer>await this.pyBackendClient.request({
-      target: "camera",
-      cmd: "take_picture"
-    });
+    const res = await this._invoke("TakePicture", {});
+    return res.picture;
   }
 
   async stopRecording() {
-    await this.pyBackendClient.request({
-      target: "camera",
-      cmd: "stop_bg_task"
-    });
+    await this._invoke("StopTimelapse", {});
   }
 
   async toggleWebCam(): Promise<boolean> {
-    const res = <Buffer>await this.pyBackendClient.request({
-      target: "camera",
-      cmd: "toggle_stream",
+    const res = await this._invoke("ToggleWebStream", {
       url: this.cameraSettings.youtubeUrl + "/" + this.cameraSettings.youtubeStreamKey
     });
-    return res.toString("utf-8").toLowerCase() === "true";
+    return res.isStreaming;
   }
 
   async getStatus(): Promise<string> {
-    const res = <Buffer>await this.pyBackendClient.request({
-      target: "camera",
-      cmd: "get_state"
-    });
-    return res.toString("utf-8");
+    const res = await this._invoke("GetState", {});
+    return res.state;
+  }
+
+  async _invoke(meth: string, args: any): Promise<any> {
+    const client = await this.backendClient.getCameraClient();
+    const res = await client[meth + "Async"].apply(client, [args]);
+    if (!("result" in res)) {
+      throw new Error("unexpected camera result");
+    }
+    if (!res.result.status) {
+      throw new Error(res.result.message);
+    }
+    return res;
   }
 }

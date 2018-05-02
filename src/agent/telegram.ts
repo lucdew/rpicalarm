@@ -71,7 +71,7 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
       if (arguments.length >= 1) {
         const options = arguments[0];
         if (options && options.url && /.*getUpdates.*/.test(options.url) && !options.timeout) {
-          options.timeout = 30000;
+          options.timeout = 180000; // 3mn safeguard in cases the telegram long polling timeout is not applied
           return orgiPost.apply(request, arguments);
         }
       }

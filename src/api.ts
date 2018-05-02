@@ -126,10 +126,6 @@ export interface ICloudinaryConfig {
 
 export interface ICameraSettings {
   savePath: string;
-  vflip: boolean;
-  hflip: boolean;
-  imageSize: string;
-  cameraCaptureLength: number;
   youtubeUrl: string;
   youtubeStreamKey: string;
 }
