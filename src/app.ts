@@ -5,7 +5,7 @@ import * as toml from "toml";
 import Alarm from "./alarm";
 import { argv as yargs } from "yargs";
 import * as util from "./util";
-import { IAlarmSettings, IConfiguration, ISessionInfo } from "./api";
+import { IConfiguration, ISessionInfo, ISensor } from "./api";
 
 import CloudinaryAgent from "./agent/cloudinary";
 import Camera from "./agent/camera";
@@ -61,15 +61,24 @@ if (cfg.logging && cfg.logging.level) {
 }
 
 const alarm = new Alarm(cfg.alarm);
-const camera = new Camera(cfg.agents.camera);
+const camera = new Camera(cfg.agents.camera, alarm);
 const webServer = new WebServer(cfg.webServer);
 const telegram = new TelegramAgent(cfg.agents.telegram, alarm, camera);
 const backupAgents = [new CloudinaryAgent(cfg.agents.cloudinary)];
 const authAgents = [telegram, new TwilioAgent(cfg.agents.twilio, webServer)];
+const pirSensor = new PirSensorAgent(cfg.agents.pirsensor.pinNum, alarm);
 const recordingAgents = [camera];
-const sensorAgents = [new PirSensorAgent(cfg.agents.pirsensor.pinNum, alarm)];
+
 const ccs = [telegram];
 const notifierAgents = [new EmailAgent(cfg.agents.email)];
+const cfgSensorsNames = cfg.alarm.sensors.map(cfgSensor => (cfgSensor.name + "").toLowerCase());
+const sensorAgents: ISensor[] = [pirSensor, camera].filter(sensor =>
+  cfgSensorsNames.includes(sensor.name.toLowerCase())
+);
+
+if (sensorAgents.length === 0) {
+  logger.warn("Starting without sensors !!!");
+}
 
 const enabledAuthAgents = [];
 for (const auth of cfg.alarm.authenticators || []) {
@@ -87,6 +96,7 @@ for (const auth of cfg.alarm.authenticators || []) {
   }
   enabledAuthAgents.push(foundAg);
 }
+
 alarm.authenticators = enabledAuthAgents;
 alarm.recorders = recordingAgents;
 alarm.sensors = sensorAgents;

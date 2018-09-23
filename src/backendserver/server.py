@@ -6,6 +6,7 @@ import grpc
 import os
 import logging
 import json
+import time
 from datetime import datetime
 
 from backendserver.camera import Camera
@@ -47,6 +48,7 @@ class CameraService(backend_pb2_grpc.CameraServiceServicer):
         return backend_pb2.BasicReply(result=res["result"])
 
     def StopMotionDetection(self, request, context):
+        self.motions_detections.clear()
         res = self._invoke("stop_motion_detection")
         return backend_pb2.BasicReply(result=res["result"])
 
@@ -60,6 +62,7 @@ class CameraService(backend_pb2_grpc.CameraServiceServicer):
             # Check if there are any new messages
             while len(self.motions_detections) > 0:
                 yield self.motions_detections.pop()
+            time.sleep(0.5)
 
     def _on_motion_detected(self):
         self.motions_detections.append(backend_pb2.Notification(

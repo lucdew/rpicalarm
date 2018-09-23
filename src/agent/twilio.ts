@@ -2,17 +2,9 @@
 import * as twilio from "twilio";
 import * as log4js from "log4js";
 import { instance as authSessionManager, AuthStates } from "../authSessionManager";
-import * as util from "../util";
 import * as express from "express";
 import WebServer from "../webServer";
-import {
-  IControlCenter,
-  IAuthenticator,
-  ITwilioConfig,
-  IAuthSession,
-  IAuthSessionEvt,
-  AuthTimeoutError
-} from "../api";
+import { IAuthenticator, ITwilioConfig, IAuthSession } from "../api";
 import * as moment from "moment";
 import * as networkManager from "../networkManager";
 
@@ -20,8 +12,6 @@ const logger = log4js.getLogger("twilio");
 
 const ROUTER_BASE_PATH = "/twilio";
 const AGENT_NAME = "twilio";
-
-let twimlMessage: any;
 
 class TwimlServer {
   private baseReplyUrl: string;

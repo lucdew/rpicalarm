@@ -1,82 +1,39 @@
 import {
   ITelegramConfig,
   IAuthSession,
-  AuthTimeoutError,
   IAuthenticator,
   IAuthSessionEvt,
   IControlCenter
 } from "../api";
 import Alarm from "../alarm";
 import Camera from "./camera";
-import * as fs from "fs";
-import * as TeleBot from "telebot";
+import Telegraf, { ContextMessageUpdate } from "telegraf";
+import * as tt from "telegraf/typings/telegram-types.d";
 import * as log4js from "log4js";
 import { instance as authSessionManager, AuthStates } from "../authSessionManager";
 import * as util from "../util";
 import * as moment from "moment";
 
+const Markup = require("telegraf/markup");
+
 const logger = log4js.getLogger("telegramBot");
 const cmdRegex = /^\/([^\s]+)\s*(.*)$/; // command example /photo <params>
-const request = require("request");
-
-export interface TelegramChat {
-  id: string;
-  type: string;
-  title?: string;
-  // others not copied
-}
-
-export interface TelegramUser {
-  id: string;
-  is_bot: boolean;
-  first_name: string;
-  last_name: string;
-  username: string;
-  language_code: string;
-}
-export interface TelegramMessage {
-  message_id: number;
-  from: TelegramUser;
-  date: number;
-  chat: TelegramChat;
-  text?: string;
-}
-
 const AUTH_MSG = "Intrusion detected. What is your password ?";
-
 export class TelegramAgent implements IAuthenticator, IControlCenter {
   name = "telegram";
   delay: moment.Duration;
-  private bot: TeleBot;
+  private bot: Telegraf<ContextMessageUpdate>;
   private sessionId: string; // running session
-  private answersExpected: { [id: string]: string } = {};
+  private answerExpected: string;
   private lastMessageSentTime: number;
   private cmdHandlers: {
-    [id: string]: (message?: TelegramMessage, ...args: any[]) => Promise<any>;
+    [id: string]: (...args: any[]) => Promise<any>;
   } = {};
   private lastMsgIdProcessed: number;
   private chatId: string;
 
   constructor(public telegramCfg: ITelegramConfig, public alarm: Alarm, public camera: Camera) {
-    this.bot = new TeleBot({
-      token: telegramCfg.botToken,
-      polling: {
-        timeout: 30
-      }
-    });
-
-    // dirty-hack for telebot request timeout
-    const orgiPost = request.post;
-    request.post = function() {
-      if (arguments.length >= 1) {
-        const options = arguments[0];
-        if (options && options.url && /.*getUpdates.*/.test(options.url) && !options.timeout) {
-          options.timeout = 180000; // 3mn safeguard in cases the telegram long polling timeout is not applied
-          return orgiPost.apply(request, arguments);
-        }
-      }
-      return orgiPost.apply(request, arguments);
-    };
+    this.bot = new Telegraf(telegramCfg.botToken);
 
     for (const meth of [
       this.onDisable,
@@ -93,41 +50,31 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
       this.cmdHandlers[evtName] = meth.bind(this);
       logger.debug("Added command %s with handler method %s", evtName, methName);
     }
-    this.bot.on(["/*", "*"], this.onMessage.bind(this));
-
-    // intercept sending message
-    this.bot.on("sendMessage", args => {
-      const id = args[0];
-      const opts = args[2] || {};
-
-      if (opts.ask) {
-        this.answersExpected[id] = opts.ask;
-      }
-      this.lastMessageSentTime = Date.now();
-    });
+    this.bot.on("message", this.onMessage.bind(this));
   }
 
   async start() {
     logger.debug("Starting telegram agent");
 
-    await this.bot.connect();
+    this.bot.startPolling(30);
     logger.debug("telegram agent started");
+    return await Promise.resolve();
   }
 
-  async onMessage(msg: TelegramMessage): Promise<any> {
-    if ("" + msg.from.id !== this.telegramCfg.userId) {
-      logger.debug("Unidentifed message emitter, got %j", msg.from);
+  async onMessage(ctx: ContextMessageUpdate): Promise<any> {
+    if (!ctx.from || "" + ctx.from.id !== this.telegramCfg.userId) {
+      logger.debug("Unidentifed message emitter, got %j", ctx.from);
       return;
     } else {
-      logger.debug("Got message %j", msg);
+      logger.debug("Got message %j", ctx.message);
     }
-    if (this.lastMsgIdProcessed === msg.message_id) {
+    if (this.lastMsgIdProcessed === ctx.message.message_id) {
       logger.debug("Already processed, dropping");
       return;
     }
-    this.chatId = msg.chat.id;
-    this.lastMsgIdProcessed = msg.message_id;
-    const cmdMatch = cmdRegex.exec(msg.text);
+    this.chatId = (ctx.chat && ctx.chat.id) + "";
+    this.lastMsgIdProcessed = ctx.message.message_id;
+    const cmdMatch = cmdRegex.exec(ctx.message.text);
     let handler;
 
     if (cmdMatch) {
@@ -137,19 +84,19 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
       handler = this.cmdHandlers[cmd.toLowerCase()];
       if (handler) {
         try {
-          await handler(msg, cmdArgs);
+          await handler(cmdArgs);
         } catch (err) {
           logger.error("Failed processing cmd [%s]", cmd, err);
         }
       }
-    } else if (this.answersExpected[msg.chat.id]) {
+    } else if (this.answerExpected) {
       // process ask reply
-      const eventType = this.answersExpected[msg.chat.id];
-      delete this.answersExpected[msg.chat.id];
+      const eventType = this.answerExpected;
+      delete this.answerExpected;
       handler = this.cmdHandlers[eventType];
       if (handler) {
         try {
-          await handler(msg, msg.text);
+          await handler(ctx.message.text);
         } catch (err) {
           logger.error("Failed processing chat event [%s]", eventType, err);
         }
@@ -159,7 +106,7 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
       const session = authSessionManager.getSession(this.sessionId);
       if (session) {
         try {
-          await this.onAuthSessionMessage(session, msg);
+          await this.onAuthSessionMessage(session, ctx.message.text);
         } catch (err) {
           session.reportFailure(err, "telegram");
         }
@@ -167,19 +114,10 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
     }
   }
 
-  private async sendMessage(
-    text: string,
-    opts?: {
-      parseMode?: string;
-      replyToMessage?: number;
-      replyMarkup?: any;
-      notification?: boolean;
-      webPreview?: boolean;
-      ask?: string;
-    }
-  ) {
+  private async sendMessage(text: string, opts?: tt.ExtraReplyMessage) {
+    this.lastMessageSentTime = Date.now();
     if (this.chatId) {
-      return await this.bot.sendMessage(this.chatId, "[Alarm] " + text, opts);
+      return await this.bot.telegram.sendMessage(this.chatId, "[Alarm] " + text, opts);
     } else {
       throw new Error("No chat id");
     }
@@ -223,14 +161,15 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
     return await this.sendMessage(txtMsg);
   }
 
-  async onStart(msg: TelegramMessage, sessionId: string) {
+  async onStart(sessionId: string) {
+    delete this.answerExpected;
     if (!sessionId) {
       return this.onStatus();
     }
     const session = authSessionManager.getSession(sessionId);
     if (session) {
       try {
-        await this.onAuthSessionMessage(session, msg, true);
+        await this.onAuthSessionMessage(session, "", true);
       } catch (err) {
         session.reportFailure(err, "telegram");
       }
@@ -239,14 +178,16 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
     }
   }
 
-  async onPhoto(msg: TelegramMessage) {
+  async onPhoto(ctx: ContextMessageUpdate) {
     try {
       const b = await this.camera.takePhoto();
       await this.sendMessage("sending your file...");
       logger.debug("Photo size=%s", b ? b.length + "" : "null");
-      await this.bot.sendPhoto(msg.chat.id, b, {
-        fileName: moment().format("YYYYMMDDHHmmss")
-      });
+      await this.bot.telegram.sendPhoto(
+        this.chatId,
+        { source: b },
+        { caption: moment().format("YYYYMMDDHHmmss") }
+      );
     } catch (err) {
       logger.error("failed taking photo", err);
       await this.sendMessage("failed taking photos");
@@ -278,8 +219,6 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
 
     this.sessionId = session.sessionId;
 
-    const sendMessageErrorHandler = (err: any) => logger.error(err);
-
     session.registerListener(async (evt: IAuthSessionEvt) => {
       try {
         await this.onAuthSessionEvent(evt);
@@ -294,16 +233,18 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
             session.sessionId
           }`
         );
-        const markup = this.bot.inlineKeyboard([
+        this.chatId = `@${this.telegramCfg.channel}`;
+        const startSessionMarkup = Markup.inlineKeyboard([
           [
-            this.bot.inlineButton("Authenticate", {
-              url: `telegram.me/${this.telegramCfg.botName}?start=${session.sessionId}`
-            })
+            Markup.urlButton(
+              "Authenticate",
+              `telegram.me/${this.telegramCfg.botName}?start=${session.sessionId}`
+            )
           ]
         ]);
         logger.debug(`sending message to @${this.telegramCfg.channel}`);
-        await this.bot.sendMessage(`@${this.telegramCfg.channel}`, "[Alarm]", {
-          replyMarkup: markup
+        await this.sendMessage("", {
+          reply_markup: startSessionMarkup
         });
       } else {
         await this.sendMessage(AUTH_MSG);
@@ -313,12 +254,12 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
     }
   }
 
-  async onAuthSessionMessage(session: IAuthSession, msg: TelegramMessage, isStart?: boolean) {
+  async onAuthSessionMessage(session: IAuthSession, text: string, isStart?: boolean) {
     logger.debug("session %s", session);
 
     const sessionUpdatedSinceLastMessage = session.lastUpdateTime > this.lastMessageSentTime;
     if (session.authState === AuthStates.STARTED && !isStart) {
-      const enteredPassword = msg.text;
+      const enteredPassword = text;
       session.authenticate(enteredPassword, this.name);
     } else if (session.authState === AuthStates.STARTED && isStart) {
       return await this.sendMessage(AUTH_MSG);
@@ -327,7 +268,7 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
       !sessionUpdatedSinceLastMessage // if session has been updated it means that the msg.txt is the password, ignore it it is not required anymore
     ) {
       try {
-        session.setDisarmDuration(msg.text, false, "telegram");
+        session.setDisarmDuration(text, false, "telegram");
       } catch (err) {
         // ignore
       }
@@ -336,15 +277,14 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
     }
   }
 
-  async onDisarm(msg: TelegramMessage, disarmDurationStr: string) {
+  async onDisarm(disarmDurationStr: string) {
     if (disarmDurationStr && disarmDurationStr.length > 0) {
       let duration;
       try {
         duration = util.parseDuration(disarmDurationStr, "h");
       } catch (err) {
-        return await this.sendMessage("invalid disarm time, enter again", {
-          ask: "disarm"
-        });
+        this.answerExpected = "disarm";
+        return await this.sendMessage("invalid disarm time, enter again");
       }
       try {
         await this.alarm.disarm(duration);
@@ -354,9 +294,8 @@ export class TelegramAgent implements IAuthenticator, IControlCenter {
         await this.sendMessage("disarm failure");
       }
     } else {
-      await this.sendMessage("How long alarm must be disarmed ?", {
-        ask: "disarm"
-      });
+      this.answerExpected = "disarm";
+      await this.sendMessage("How long alarm must be disarmed ?");
     }
   }
 

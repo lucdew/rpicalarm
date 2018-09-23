@@ -2,7 +2,6 @@ import * as api from "../api";
 import * as log4js from "log4js";
 //@ts-ignore
 import * as cloudinary from "cloudinary";
-import { config } from "bluebird";
 
 const logger = log4js.getLogger("cloudinary");
 

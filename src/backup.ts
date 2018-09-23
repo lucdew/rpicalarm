@@ -11,7 +11,6 @@ function isImageFile(f: string) {
   return f && !path.basename(f).startsWith("_") && (f.endsWith(".jpeg") || f.endsWith(".jpg"));
 }
 
-const fsAccessAsync = bluebird.promisify(fs.access);
 const fsReaddirAsync = bluebird.promisify(fs.readdir);
 
 export default class Backup {
@@ -96,7 +95,7 @@ export default class Backup {
     for (let idx = 0; idx < someFiles.length; idx++) {
       const f = someFiles[idx];
       try {
-        await fsAccessAsync(f);
+        fs.accessSync(f);
       } catch (err) {
         logger.error("Failed accessing file %s must have been deleted", f, err);
         return;

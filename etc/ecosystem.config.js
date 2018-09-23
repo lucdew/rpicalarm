@@ -9,6 +9,7 @@ module.exports = {
       name: "rpicalarm",
       cwd: "/var/www/rpicalarm",
       script: "app.js",
+      node_args: ["--inspect"],
       args: "-c rpicalarm.conf",
       out_file: "/var/log/rpicalarm/rpicalarm.log",
       err_file: "/var/log/rpicalarm/rpicalarm.log",

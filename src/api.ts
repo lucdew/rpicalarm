@@ -116,6 +116,9 @@ export interface IAlarmSettings {
     name: string;
     delay: string;
   }[];
+  sensors: {
+    name: string;
+  }[];
 }
 
 export interface ICloudinaryConfig {
