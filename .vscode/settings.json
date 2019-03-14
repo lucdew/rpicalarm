@@ -2,5 +2,6 @@
 {
   "editor.formatOnSave": true,
   "python.pythonPath": "/usr/bin/python3",
-  "python.formatting.provider": "autopep8"
+  "python.formatting.provider": "autopep8",
+  "python.linting.pylintArgs": ["--disable=C0111"]
 }

@@ -1,0 +1,19 @@
+
+  
+[Unit]
+Description=rpicalarm service
+After=multi-user.target
+
+[Service]
+Type=idle
+User=pi
+Group=pi
+TimeoutStartSec=15
+ExecStart=/usr/local/bin/rpicalarm-cli.py
+ExecStop=/usr/bin/pkill rpicalarm-cli.py
+RemainAfterExit=no
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
