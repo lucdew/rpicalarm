@@ -150,7 +150,7 @@ class Alarm(object):
             self.current_session = session
 
             def on_auth_timer_expired():
-                if self.state == AlarmState.AUTHENTICATING:
+                if self.state == AlarmState.AUTHENTICATING and not session.is_authenticated:
                     self.on_authentication_failed(self, session, AuthFailureReason.TIMEOUT)
 
             timer = Timer(self.max_auth_time, on_auth_timer_expired)
@@ -206,6 +206,7 @@ class Alarm(object):
     def on_authentication_failed(self, origin, session, reason):
         self.auth_failures_count += 1
         if reason == AuthFailureReason.MAX_AUTH_TRIES or reason == AuthFailureReason.TIMEOUT:
+            LOGGER.debug("authentication failure %s", reason)
             events.authentication_ended(origin, session)
             self.update_state(AlarmState.ALARMING)
         else:
