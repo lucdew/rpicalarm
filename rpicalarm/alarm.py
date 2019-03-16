@@ -168,7 +168,7 @@ class Alarm(object):
         if self.state != AlarmState.AUTHENTICATING:
             raise Exception("Cannot set disarm time, state does not allow it")
 
-        if disarm_time == "0":
+        if disarm_time == "0" or disarm_time == 0:
             self.update_state(AlarmState.DISABLED)
             return
 
