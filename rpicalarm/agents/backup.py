@@ -77,13 +77,15 @@ class Backuper(PatternMatchingEventHandler):
         events.authentication_succeeded += self.on_authentication_succeeded
 
     def on_any_event(self, event):
+        file_path = None
         # Camera writes the file continously and rpicalaram camera module renames it when done
         if event.event_type == EVENT_TYPE_MOVED:
             file_path = event.dest_path
         elif event.event_type == EVENT_TYPE_MODIFIED:
             file_path = event.src_path
         else:
-            pass
+            LOGGER.debug("Unsupported event %s", event)
+            return
 
         LOGGER.debug("Got file creation event %s", file_path)
         file_metadata = extract_metatada(file_path)

@@ -5,5 +5,7 @@ events
 RPi.GPIO
 cloudinary
 watchdog
+imutils
 twilio ~= 6.25
 Flask ~= 1.0
+opencv-contrib-python

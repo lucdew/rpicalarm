@@ -1,23 +1,58 @@
 # -*- coding: utf-8 -*-
 
 import datetime
+from enum import Enum
 import time
 import io
 import os
 import subprocess
-from threading import Event, Thread
+from threading import Event, Thread, RLock
 
 import numpy as np
+import cv2
+import imutils
+
+
 # pylint: disable=E0401
 import picamera
 from picamera.array import PiMotionAnalysis
-
-
 from .. import events, getLogger
 
 TIMELAPSE_WAIT_EVENT = Event()
 
 LOGGER = getLogger(__name__)
+
+
+class CameraError(Exception):
+    pass
+
+
+class CameraAlreadyInStateError(CameraError):
+    pass
+
+
+class CameraBusyError(CameraError):
+    pass
+
+
+class CameraFlags(Enum):
+    TAKING_PICTURE = 1
+    STREAMING = 2
+    MOTION_DETECTING = 4
+    TIMELAPSING = 8
+
+
+class CameraPort(Enum):
+    STILL = 1
+    VIDEO = 2
+
+
+def bit_count(int_type):
+    count = 0
+    while int_type:
+        int_type &= int_type - 1
+        count += 1
+    return count
 
 
 def print_proc_stdout(aproc):
@@ -55,50 +90,20 @@ def print_proc_stdout(aproc):
     print_thread.start()
 
 
-class MotionDetector(PiMotionAnalysis):
-    motion_magnitude = 40
-    motion_vectors = 10
-    motion_settle_time = 1
-    motion_detection_started = 0
-
-    def motion_detected(self, vector_count):
-        LOGGER.debug("Motion detected")
-        if time.time() - self.motion_detection_started < self.motion_settle_time:
-            LOGGER.debug('Ignoring initial motion due to settle time')
-            return
-        LOGGER.info('Motion detected. Vector count: %s. Threshold: %s',
-                    vector_count, self.motion_vectors)
-
-        # TODO: produce events
-
-    def analyze(self, a):
-        a = np.sqrt(
-            np.square(a['x'].astype(np.float)) +
-            np.square(a['y'].astype(np.float))
-        ).clip(0, 255).astype(np.uint8)
-        vector_count = (a > self.motion_magnitude).sum()
-        LOGGER.debug("Vector count %d", vector_count)
-        if vector_count > self.motion_vectors:
-            self.motion_detected(vector_count)
-
-
 class Camera(object):
-    def __init__(self, photo_size="640x480", motion_size="320x230", stream_size="320x230", video_quality="24", video_bitrate="600000",
-                 vflip="True", hflip="False", save_path="/var/tmp/images", youtube_stream_key=None, youtube_url=None):
-        self.photo_size = tuple([int(x) for x in photo_size.split('x')])
+    def __init__(self, vflip="True", hflip="False", save_path="/var/tmp/images",
+                 motion_size="320x230", stream_size="320x230", video_quality="24",
+                 video_bitrate="600000", youtube_stream_key=None, youtube_url=None):
         self.motion_size = tuple([int(x) for x in motion_size.split('x')])
         self.stream_size = tuple([int(x) for x in stream_size.split('x')])
         self.video_quality = int(video_quality)
         self.video_bitrate = int(video_bitrate)
-        self.is_motion_detecting = False
-        self.is_streaming = False
-        self.is_timelapsing = False
         self.camera = picamera.PiCamera()
         self.camera.vflip = vflip.lower() == "true"
         self.camera.hflip = hflip.lower() == "true"
         self.camera.led = False
-        self.camera.resolution = (2592, 1944)
-        self.camera.framerate = 15
+        self.camera.resolution = (1920, 1080)
+        self.camera.framerate = 30
         self.camera.awb_mode = 'auto'
         self.camera.exposure_mode = 'auto'
         self.image_save_path = save_path
@@ -107,66 +112,181 @@ class Camera(object):
         self.encode_proc = None
         events.alarm_authenticating += self.on_authentication_required
         events.authentication_succeeded += self.on_authentication_succeeded
+        self.flags = 0
+        self.still_port_in_use = 0
+        self.lock = RLock()
+
+    def _acquire_flag(self, a_flag, port=None):
+
+        with self.lock:
+            if self._is_flag_set(a_flag):
+                raise CameraAlreadyInStateError("Flag {} is already set".format(a_flag.name))
+
+            # Limit operations to 2
+            if bit_count(self.flags) >= 2:
+                raise CameraBusyError("Cannot set flag {}, camera has already {} flags set".format(
+                    a_flag.name, self.get_state()))
+            
+            self.flags |= a_flag.value
+
+            if port is None:
+                if self.still_port_in_use == 0:
+                    self.still_port_in_use = a_flag.value
+                    return CameraPort.STILL
+                else:
+                    return CameraPort.VIDEO
+            elif port == CameraPort.STILL:
+                if self.still_port_in_use != 0:
+                    raise CameraBusyError("Still port is in use cannot continue")
+                self.still_port_in_use = a_flag.value
+                return CameraPort.STILL
+            else:
+                return CameraPort.VIDEO
+
+
+    def _unset_flag(self, a_flag):
+        with self.lock:
+            if self.still_port_in_use & a_flag.value == a_flag.value:
+                self.still_port_in_use = 0
+                LOGGER.debug("self.still_port_in_use=%d", self.still_port_in_use)
+            self.flags ^= a_flag.value
+            LOGGER.debug("Unset flag %s self.flags=%d", a_flag.name,self.flags)
+
+    def _is_flag_set(self, a_flag):
+        is_flag_set = (a_flag.value & self.flags) == a_flag.value
+        LOGGER.debug("Flag %s is_set=%s, flags=%d", a_flag.name, is_flag_set, self.flags)
+        return is_flag_set
 
     def take_photo_io(self):
-        osw = io.BytesIO()
-        self.camera.capture(osw, format='jpeg', resize=self.photo_size)
-        osw.seek(0)
-        return osw
+        port = self._acquire_flag(CameraFlags.TAKING_PICTURE)
+        try:
+            osw = io.BytesIO()
+            self.camera.capture(osw, format='jpeg', use_video_port=port == CameraPort.VIDEO)
+            osw.seek(0)
+            return osw
+        finally:
+            self._unset_flag(CameraFlags.TAKING_PICTURE)
 
     def on_authentication_required(self, _, session):
-        self.start_timelapse(file_prefix="camera_{0}".format(session.id))
-        return
+        try:
+            port = self._acquire_flag(CameraFlags.TIMELAPSING)
+            self.start_timelapse(file_prefix="camera_{0}".format(session.id), port=port)
+        except CameraAlreadyInStateError:
+            return
 
     def on_authentication_succeeded(self, *_):
         self.stop_timelapse()
 
     def start_timelapse(self, **kwargs):
-        if self.is_timelapsing:
-            return
         TIMELAPSE_WAIT_EVENT.clear()
-        bg_thread = Thread(name="timelapse", target=self._take_timelapse, kwargs=kwargs)
+        bg_thread = Thread(
+            name="timelapse", target=self._take_timelapse, kwargs=kwargs)
         bg_thread.daemon = True
         bg_thread.start()
-        self.is_timelapsing = True
 
     def start_motion_detection(self):
-        if self.is_motion_detecting:
-            return
-        if self.motion_detector is None:
-            self.motion_detector = MotionDetector(
-                self.camera, size=self.motion_size)
-        self.camera.start_recording(os.devnull, format='h264', splitter_port=2,
-                                    resize=self.motion_detector, motion_output=self.motion_detector)
-        LOGGER.debug("motion detection started")
-        self.is_motion_detecting = True
 
-    def stop_motion_detection(self):
-        if self.motion_detector:
-            try:
-                self.motion_detector.close()
-            except Exception as ex:
-                LOGGER.error("Could not close motion_detector %s", repr(ex))
-            self.motion_detector = None
         try:
-            self.camera.stop_recording(splitter_port=2)
-        finally:
-            self.is_motion_detecting = False
+            self._acquire_flag(CameraFlags.MOTION_DETECTING, port=CameraPort.STILL)
+        except CameraAlreadyInStateError:
+            return
+
+        min_area = 500
+        past_frame = None
+        LOGGER.debug("Starting motion detection")
+        while self._is_flag_set(CameraFlags.MOTION_DETECTING):
+            stream = io.BytesIO()
+            self.camera.capture(stream, format='jpeg', use_video_port=False,
+                                resize=self.motion_size)
+            data = np.fromstring(stream.getvalue(), dtype=np.uint8)
+            frame = cv2.imdecode(data, 1)
+
+            # if frame is initialized, we have not reach the end of the video
+            if frame is not None:
+                past_frame = self.handle_new_frame(frame, past_frame, min_area)
+            else:
+                LOGGER.error("No more frame")
+            # rpis.state.check()
+            time.sleep(0.3)
+            # self.stop_motion_detection()
+        LOGGER.debug("motion detection started")
+
+    # def stop_motion_detection(self):
+    #     if self.motion_detector:
+    #         try:
+    #             self.motion_detector.close()
+    #         except Exception as ex:
+    #             LOGGER.error("Could not close motion_detector %s", repr(ex))
+    #         self.motion_detector = None
+    #     try:
+    #         self.camera.stop_recording(splitter_port=2)
+    #     finally:
+    #         self.is_motion_detecting = False
+
+    def handle_new_frame(self, frame, past_frame, min_area):
+        #cv2.imwrite("raw_frame_%d.jpg" % i, frame)
+        (height, width) = frame.shape[:2]
+        ratio = 500 / float(width)
+        dim = (500, int(height * ratio))
+
+        frame = cv2.resize(frame, dim, cv2.INTER_AREA)  # We resize the frame
+        # We apply a black & white filter
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (21, 21), 0)  # Then we blur the picture
+
+        #cv2.imwrite("gray_frame_%d.jpg" % i, gray)
+
+        # if the first frame is None, initialize it because there is no frame for comparing the current one with a previous one
+        if past_frame is None:
+            past_frame = gray
+            return past_frame
+
+        # check if past_frame and current have the same sizes
+        (h_past_frame, w_past_frame) = past_frame.shape[:2]
+        (h_current_frame, w_current_frame) = gray.shape[:2]
+        # This shouldnt occur but this is error handling
+        if h_past_frame != h_current_frame or w_past_frame != w_current_frame:
+            LOGGER.error('Past frame and current frame do not have the same sizes {0} {1} {2} {3}'.format(
+                h_past_frame, w_past_frame, h_current_frame, w_current_frame))
+            return
+
+        # compute the absolute difference between the current frame and first frame
+        frame_detla = cv2.absdiff(past_frame, gray)
+        # then apply a threshold to remove camera motion and other false positives (like light changes)
+        thresh = cv2.threshold(frame_detla, 50, 255, cv2.THRESH_BINARY)[1]
+
+        # dilate the thresholded image to fill in holes, then find contours on thresholded image
+        thresh = cv2.dilate(thresh, None, iterations=2)
+        #cv2.imwrite("thresh_frame_%d.jpg" % i, thresh)
+        cnts = cv2.findContours(
+            thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts = cnts[0] if imutils.is_cv2() else cnts[1]
+
+        # loop over the contours
+        for c in cnts:
+            # print(cv2.contourArea(c))
+            # if the contour is too small, ignore it
+            if cv2.contourArea(c) < min_area:
+                continue
+
+            LOGGER.debug("Motion detected!")
+            # Motion detected because there is a contour that is larger than the specified min_area
+            # compute the bounding box for the contour, draw it on the frame,
+            (x, y, w, h) = cv2.boundingRect(c)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            # TODO pass frame
+            events.intrusion_detected(self)
+            #cv2.imwrite("motion_%d.jpg" % i, frame)
 
     def get_state(self):
         states = []
-        if self.is_streaming:
-            states.append("streaming")
-        if self.is_motion_detecting:
-            states.append("motion detecting")
-        if self.is_timelapsing:
-            states.append("timelapsing")
-        if not states:
-            states.append("not busy")
+        for flag in CameraFlags:
+            if self._is_flag_set(flag):
+                states.append(flag.name.lower())
 
         return ",".join(states)
 
-    def _take_timelapse(self, timelapse=5, file_prefix="camera"):
+    def _take_timelapse(self, timelapse=5, file_prefix="camera", port=CameraPort.VIDEO):
         LOGGER.debug("starting timelapse")
         try:
             # Camera warm-up time
@@ -175,18 +295,20 @@ class Camera(object):
             stream = io.BytesIO()
 
             for _ in self.camera.capture_continuous(
-                    stream, format="jpeg", use_video_port=True, resize=self.photo_size):
+                    stream, format="jpeg", use_video_port=port == CameraPort.VIDEO):
 
                 now_string = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
                 file_name = "{0}_{1}.jpg".format(file_prefix, now_string)
                 stream.seek(0)
 
-                tmp_file_path = os.path.join(self.image_save_path, "_{0}".format(file_name))
+                tmp_file_path = os.path.join(
+                    self.image_save_path, "_{0}".format(file_name))
 
                 with open(tmp_file_path, 'wb') as tmp_file:
                     tmp_file.write(stream.read())
 
-                os.rename(tmp_file_path, os.path.join(self.image_save_path, file_name))
+                os.rename(tmp_file_path, os.path.join(
+                    self.image_save_path, file_name))
 
                 LOGGER.debug('written picture %s', os.path.join(
                     self.image_save_path, file_name))
@@ -196,17 +318,17 @@ class Camera(object):
 
                 TIMELAPSE_WAIT_EVENT.wait(timelapse)
 
-                if not self.is_timelapsing:
+                if not self._is_flag_set(CameraFlags.TIMELAPSING):
                     LOGGER.debug("not continuing capture_continuous")
                     break
 
         except Exception as ex:
             LOGGER.error("Got exception %s", repr(ex))
-        finally:
-            self.is_timelapsing = False
 
     def stop_timelapse(self):
-        self.is_timelapsing = False
+        if not self._is_flag_set(CameraFlags.TIMELAPSING):
+            return
+        self._unset_flag(CameraFlags.TIMELAPSING)
         TIMELAPSE_WAIT_EVENT.set()
 
     def _stream_to_url(self, url):
@@ -229,30 +351,31 @@ class Camera(object):
                 quality=self.video_quality,
                 bitrate=self.video_bitrate)
             print_proc_stdout(self.encode_proc)
-            self.is_streaming = True
         except Exception as ex:
             if self.encode_proc and self.encode_proc.poll() is None:
                 try:
                     self.encode_proc.kill()
-                except Exception as e2:
-                    LOGGER.debug("Could not kill video encoding %s", repr(e2))
+                except Exception:
+                    LOGGER.exception("Could not kill video encoding")
             raise ex
 
     def toggle_web_stream(self):
-        if self.is_streaming:
-            self.stop_web_stream()
+        if self._is_flag_set(CameraFlags.STREAMING):
+            self._stop_web_stream()
             return False
-        self._stream_to_url(self.youtube_url)
-        return True
+        else:
+            self._acquire_flag(CameraFlags.STREAMING, port=CameraPort.VIDEO)
+            self._stream_to_url(self.youtube_url)
+            return True
 
-    def stop_web_stream(self):
-        if self.encode_proc and self.encode_proc.poll() is None:
-            try:
-                self.encode_proc.kill()
-            except Exception as ex:
-                LOGGER.debug("Could not kill video encoding %s", repr(ex))
-        self.encode_proc = None
+    def _stop_web_stream(self):
         try:
             self.camera.stop_recording()
+            if self.encode_proc and self.encode_proc.poll() is None:
+                try:
+                    self.encode_proc.kill()
+                except Exception as ex:
+                    LOGGER.debug("Could not kill video encoding %s", repr(ex))
+            self.encode_proc = None
         finally:
-            self.is_streaming = False
+            self._unset_flag(CameraFlags.STREAMING)

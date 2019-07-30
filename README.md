@@ -6,6 +6,7 @@
   - [3.1. Gpio](#31-gpio)
   - [3.2. Manual installation](#32-manual-installation)
     - [3.2.1. Python3](#321-python3)
+    - [opencv dependencies](#opencv-dependencies)
     - [3.2.2. ffmpeg for webcam streaming to youtube](#322-ffmpeg-for-webcam-streaming-to-youtube)
     - [3.2.3. rpicalarm](#323-rpicalarm)
 - [4. rd parties setup](#4-rd-parties-setup)
@@ -94,6 +95,14 @@ Install python3,pip3 and update it:
 sudo apt install python3
 sudo apt install python3-pip
 sudo pip3 install --upgrade pip
+```
+
+### opencv dependencies
+
+At the time of the writing of this document, I had to install the following dependencies for opencv to work properly
+
+```
+sudo apt install libatlas3-base libsz2 libharfbuzz0b libtiff5 libjasper1 libilmbase12 libopenexr22 libilmbase12 libgstreamer1.0-0 libavcodec57 libavformat57 libavutil55 libswscale4 libqtgui4 libqt4-test libqtcore4
 ```
 
 ### 3.2.2. ffmpeg for webcam streaming to youtube

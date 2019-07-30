@@ -38,6 +38,9 @@ setup(
         #('/var/lib/rpicalarm', ['etc/data.yaml'])
     ],
     install_requires=get_requirements(),
+    dependency_links=[
+        'https://www.piwheels.org/simple/'
+    ],
     classifiers=[
         'Environment :: Console',
         'Topic :: Security',

@@ -69,7 +69,7 @@ class Telegram(object):
         try:
             with self.camera.take_photo_io() as photo:
                 self._send_message("sending your file...")
-                self.bot.send_photo(self.chat_id, photo,
+                self.bot.send_photo(self.chat_id, photo, timeout= 60,
                                     caption=datetime.datetime.now().strftime('%H:%M:%S %d/%m/%Y'))
         except Exception:
             LOGGER.exception("Failed taking photo")
@@ -79,6 +79,7 @@ class Telegram(object):
         self._update_state(AlarmState.ARMED)
 
     def handle_disable(self, *_):
+        self.session = None
         self._update_state(AlarmState.DISABLED)
 
     def handle_auth_update(self, _, update):
@@ -117,6 +118,7 @@ class Telegram(object):
             self._send_message("Toggling camera failed")
 
     def handle_cam_status(self, *_):
+        LOGGER.debug("Executing handle_cam_status")
         try:
             status = self.camera.get_state()
             self._send_message("Camera is {}".format(status))
