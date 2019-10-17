@@ -117,6 +117,7 @@ class Alarm(object):
             x) if x in self.authenticators else None
         events.intrusion_detected += self.on_intrusion_detected
         events.authentication_failed += self.on_authentication_failed
+        events.authentication_succeeded += self.on_authentication_successful
 
     def update_state(self, state, persist=True):
         with self.lock:
@@ -181,8 +182,7 @@ class Alarm(object):
             else:
                 raise Exception("Unsupported disarm time {0}".format(disarm_time))
 
-        self.update_state(AlarmState.DISARMED, persist=False)
-        self._persist_alarm_state()
+        self.update_state(AlarmState.DISARMED)
 
     def get_readable_disarm_time(self):
         if self.disarm_time == 0:

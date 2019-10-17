@@ -17,17 +17,19 @@ LOGGER = getLogger(__name__)
 
 
 def extract_metatada(src_path):
+    base_name = path.basename(src_path)
     elts = path.basename(src_path).split("_")
-    if len(elts) < 2:
+    if len(elts) < 3:
         return None
-    return FileMetaData(elts[1], elts[0])
+    return FileMetaData(elts[2], elts[1], base_name)
 
 
 class FileMetaData(object):
 
-    def __init__(self, date, session_id):
+    def __init__(self, date, session_id, base_name):
         self.date_text = date
         self.session_id = session_id
+        self.base_name = base_name
 
     def __repr__(self):
         return str(self.__dict__)
@@ -41,7 +43,8 @@ class CloudinaryBackuper(object):
     def backup(self, file_path, file_metadata):
         file_tags = self.compute_tag(file_metadata.session_id)
         LOGGER.debug("Cloudinary backup %s", file_metadata)
-        cloudinary.uploader.upload_image(file_path, tags=file_tags)
+        cloudinary.uploader.upload_image(
+            file_path, public_id=file_metadata.base_name, type="private", tags=file_tags)
         LOGGER.debug("Cloudinary backup done of %s", file_metadata)
 
     def clean(self, session_id):

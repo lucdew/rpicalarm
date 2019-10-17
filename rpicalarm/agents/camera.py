@@ -111,7 +111,9 @@ class Camera(object):
         self.motion_detector = None
         self.encode_proc = None
         events.alarm_authenticating += self.on_authentication_required
-        events.authentication_succeeded += self.on_authentication_succeeded
+        events.authentication_succeeded += self._stop_timelapse_from_event
+        events.alarm_disarmed += self._stop_timelapse_from_event
+        events.alarm_disabled += self._stop_timelapse_from_event
         self.flags = 0
         self.still_port_in_use = 0
         self.lock = RLock()
@@ -126,7 +128,7 @@ class Camera(object):
             if bit_count(self.flags) >= 2:
                 raise CameraBusyError("Cannot set flag {}, camera has already {} flags set".format(
                     a_flag.name, self.get_state()))
-            
+
             self.flags |= a_flag.value
 
             if port is None:
@@ -143,14 +145,13 @@ class Camera(object):
             else:
                 return CameraPort.VIDEO
 
-
     def _unset_flag(self, a_flag):
         with self.lock:
             if self.still_port_in_use & a_flag.value == a_flag.value:
                 self.still_port_in_use = 0
                 LOGGER.debug("self.still_port_in_use=%d", self.still_port_in_use)
             self.flags ^= a_flag.value
-            LOGGER.debug("Unset flag %s self.flags=%d", a_flag.name,self.flags)
+            LOGGER.debug("Unset flag %s self.flags=%d", a_flag.name, self.flags)
 
     def _is_flag_set(self, a_flag):
         is_flag_set = (a_flag.value & self.flags) == a_flag.value
@@ -174,7 +175,7 @@ class Camera(object):
         except CameraAlreadyInStateError:
             return
 
-    def on_authentication_succeeded(self, *_):
+    def _stop_timelapse_from_event(self, *_):
         self.stop_timelapse()
 
     def start_timelapse(self, **kwargs):
@@ -326,10 +327,12 @@ class Camera(object):
             LOGGER.error("Got exception %s", repr(ex))
 
     def stop_timelapse(self):
+        LOGGER.debug("Stopping timelapse")
         if not self._is_flag_set(CameraFlags.TIMELAPSING):
             return
         self._unset_flag(CameraFlags.TIMELAPSING)
         TIMELAPSE_WAIT_EVENT.set()
+        LOGGER.debug("Stopped timelapse")
 
     def _stream_to_url(self, url):
         LOGGER.debug("streaming to url %s", url)
