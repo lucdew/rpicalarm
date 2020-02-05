@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 
-from .util import getLogger, time_seconds_to_duration_str
+from .util import getLogger, human_time
 from . import events, parse_duration
 
 
@@ -163,9 +163,10 @@ class Alarm(object):
         return True
 
     def on_disarm_time_configuration_expired(self):
-        self.set_disarm_time(self.default_disarm_time)
+        self.update_state(AlarmState.ARMED)
 
     def set_disarm_time(self, disarm_time):
+        LOGGER.debug("Got disarm time of %s", disarm_time)
         if self.state != AlarmState.AUTHENTICATING:
             raise Exception("Cannot set disarm time, state does not allow it")
 
@@ -174,9 +175,10 @@ class Alarm(object):
             return
 
         with self.lock:
-            disarm_time = 0
             if isinstance(disarm_time, str):
+                LOGGER.debug("setting disarm time of %s", disarm_time)
                 self.disarm_time = parse_duration(disarm_time).total_seconds()
+                LOGGER.debug("disarm time is now %d", self.disarm_time)
             elif isinstance(disarm_time, (int)):
                 self.disarm_time = disarm_time
             else:
@@ -188,7 +190,7 @@ class Alarm(object):
         if self.disarm_time == 0:
             return "0 seconds"
         else:
-            return time_seconds_to_duration_str(self.disarm_time)
+            return human_time(seconds=self.disarm_time)
 
     def on_intrusion_detected(self, *_):
         try:
@@ -199,7 +201,7 @@ class Alarm(object):
                          AlarmState.AUTHENTICATING, ex)
             return
 
-    def on_authentication_successful(self):
+    def on_authentication_successful(self, *_):
         disarm_timeout_thread = Timer(60, self.on_disarm_time_configuration_expired)
         disarm_timeout_thread.start()
 

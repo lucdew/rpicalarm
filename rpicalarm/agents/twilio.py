@@ -59,9 +59,7 @@ class TwilioServer(object):
             "/twilio/callback/<session_id>", "callback", twilio_validation_decorate(self.callback_request, self.twilio_agent.auth_token), methods=["POST"])
 
     def get_gather(self, session_id):
-        return Gather(action=self.get_auth_action_url(session_id),
-                      timeout=30,
-                      finishOnKey="#")
+        return {"action":self.get_auth_action_url(session_id), "timeout":30, "finishOnKey":"#"}
 
     def get_auth_action_url(self, session_id):
         return "{}/twilio/auth/{}".format(self.web_server.auth_base_url, session_id)
@@ -82,12 +80,20 @@ class TwilioServer(object):
                 self.alarm.set_disarm_time(0)
             elif not session.is_authenticated:
                 events.on_authentication_failed(self.twilio_agent)
-        except Exception:
+        except Exception as ex:
             LOGGER.exception("Failed procession callback for session %s", session_id)
+            raise ex
 
         return ('', 200)
 
     def auth_request(self, session_id=None):
+        try:
+            return self.do_auth_request(session_id)
+        except Exception as ex:
+            LOGGER.exception("Failed procession authentication for session %s", session_id)
+            raise ex
+
+    def do_auth_request(self, session_id=None):
 
         LOGGER.debug("Inside authenticated request %s", str(request.form))
         session = self.alarm.current_session
@@ -114,20 +120,20 @@ class TwilioServer(object):
 
         elif not session.is_authenticated and not digits:
             voice_response.say("Hi this is your alarm speaking.")
-            voice_response.gather(self.get_gather(session.id)).say(
+            voice_response.gather(**self.get_gather(session.id)).say(
                 "Please enter your password followed by the pound key.")
 
         elif not session.is_authenticated and digits:
             if session.authenticate(self.twilio_agent, digits):
                 voice_response.say("You have been authenticated")
-                voice_response.gather(self.get_gather(session.id)).say(
+                voice_response.gather(**self.get_gather(session.id)).say(
                     "Enter disarm time, last digit is the unit followed by the pound key. Or, hang-up now to disable the alarm.")
             else:
                 if self.alarm.state != AlarmState.ALARMING:
                     voice_response.say("Authentication failed")
                     voice_response.say(
                         "You have {} tries remaining".format(session.remaining_tries))
-                    voice_response.gather(self.get_gather(session.id)).say(
+                    voice_response.gather(**self.get_gather(session.id)).say(
                         "Enter your password followed by the pound key")
                 else:
                     voice_response.say("Authentication failed")
@@ -135,14 +141,14 @@ class TwilioServer(object):
                     voice_response.hangup()
 
         elif session.is_authenticated and (not digits or len(digits) == 1):
-            voice_response.gather(self.get_gather(session.id)).say(
+            voice_response.gather(**self.get_gather(session.id)).say(
                 "Enter disarm time, last digit is the unit followed by the pound key. Or, hang-up now to disable the alarm.")
 
         elif session.is_authenticated and digits:
             try:
                 unit = DIGITS_TO_UNIT[digits[-1]]
                 if not unit:
-                    voice_response.gather(self.get_gather(session.id)).say(
+                    voice_response.gather(**self.get_gather(session.id)).say(
                         "Enter disarm time, last digit is the unit followed by the pound key. Or, hang-up now to disable the alarm.")
                 else:
                     self.alarm.set_disarm_time(digits[:-1]+unit)
@@ -151,7 +157,7 @@ class TwilioServer(object):
 
             except Exception:
                 LOGGER.exception("Failed setting the disarm time")
-                voice_response.gather(self.get_gather(session.id)).say(
+                voice_response.gather(**self.get_gather(session.id)).say(
                     "Enter disarm time, last digit is the unit followed by the pound key. Or, hang-up now to disable the alarm.")
         else:
             voice_response = GENERIC_ERROR
