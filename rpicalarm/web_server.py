@@ -68,6 +68,12 @@ class WebServer(object):
     def start(self):
         self.app.run(host="0.0.0.0", port=self.port)
 
+    def stop(self):
+        func = request.environ.get('werkzeug.server.shutdown')
+        if func is None:
+            return
+        func()
+
     @property
     def auth_base_url(self):
         return "http://{2}:{3}@{0}:{1}".format(self.external_ip, self.port, self.auth_username, self.auth_password)

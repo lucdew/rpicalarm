@@ -105,6 +105,7 @@ class Alarm(object):
         self._register_events_handlers()
         self.current_session = None
         self.data_file_path = Path(data_file_path)
+        self.disarm_timeout_thread = None
 
         if not self.data_file_path.parents[0].exists() or not os.access(str(self.data_file_path.parents[0]), os.W_OK):
             raise Exception("Exception {} can not write".format(str(self.data_file_path)))
@@ -163,7 +164,15 @@ class Alarm(object):
         return True
 
     def on_disarm_time_configuration_expired(self):
-        self.update_state(AlarmState.ARMED)
+        LOGGER.debug("Disarm time configuration expired, disabling the alarm")    
+        self.update_state(AlarmState.DISABLED)
+
+    def cancel_disarm_timer(self):
+        if self.disarm_timeout_thread is not None:
+            try:
+                self.disarm_timeout_thread.cancel()
+            except Exception:
+                LOGGER.exception("Could not cancel disarm timer")
 
     def set_disarm_time(self, disarm_time):
         LOGGER.debug("Got disarm time of %s", disarm_time)
@@ -171,6 +180,7 @@ class Alarm(object):
             raise Exception("Cannot set disarm time, state does not allow it")
 
         if disarm_time == "0" or disarm_time == 0:
+            self.cancel_disarm_timer()
             self.update_state(AlarmState.DISABLED)
             return
 
@@ -184,6 +194,7 @@ class Alarm(object):
             else:
                 raise Exception("Unsupported disarm time {0}".format(disarm_time))
 
+        self.cancel_disarm_timer()
         self.update_state(AlarmState.DISARMED)
 
     def get_readable_disarm_time(self):
@@ -202,8 +213,8 @@ class Alarm(object):
             return
 
     def on_authentication_successful(self, *_):
-        disarm_timeout_thread = Timer(60, self.on_disarm_time_configuration_expired)
-        disarm_timeout_thread.start()
+        self.disarm_timeout_thread = Timer(60, self.on_disarm_time_configuration_expired)
+        self.disarm_timeout_thread.start()
 
     def on_authentication_failed(self, origin, session, reason):
         self.auth_failures_count += 1
